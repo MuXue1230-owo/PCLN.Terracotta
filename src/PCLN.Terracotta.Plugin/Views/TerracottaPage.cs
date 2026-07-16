@@ -140,11 +140,12 @@ public sealed class TerracottaPage : UserControl
         _addressText.Text = snapshot.LocalAddress is null ? "联机地址：—" : $"联机地址：{snapshot.LocalAddress}";
     }
 
-    private static TextBlock CreateText(string text, double size, FontWeight weight = default) => new()
+    // Avalonia rejects FontWeight 0 ("Font weight must be > 0"). Never use default(FontWeight).
+    private static TextBlock CreateText(string text, double size, FontWeight? weight = null) => new()
     {
         Text = text,
         FontSize = size,
-        FontWeight = weight,
+        FontWeight = weight ?? FontWeight.Normal,
         TextWrapping = TextWrapping.Wrap
     };
 
