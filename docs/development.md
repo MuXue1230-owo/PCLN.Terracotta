@@ -7,7 +7,7 @@ dotnet test PCLN.Terracotta.slnx -c Release --nologo
 dotnet build src/PCLN.Terracotta.Plugin/PCLN.Terracotta.Plugin.csproj -c Release --nologo
 ```
 
-`PCLN.Plugin.Sdk.Build 0.1.0` 的 NuGet 包存在 `tools/net10.0/net10.0` 重复目录问题。项目文件包含仅针对 `0.1.0` 的兼容路径；若同级目录存在 `PCL-N-Plugin-SDK`，本地构建会优先使用其中已编译的打包器，以验证 Unix Helper 的可执行权限位。SDK 修复版发布并升级依赖后应删除这两项兼容设置。
+项目使用已发布的 PCL N Plugin SDK `0.1.1`。该版本提供 `pcl.package-assets`，并修复 SDK Build 工具目录，因此不再需要相邻 SDK 源码或 `0.1.0` 的打包路径兼容逻辑。
 
 Helper：
 

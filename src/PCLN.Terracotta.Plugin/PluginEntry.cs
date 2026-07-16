@@ -24,18 +24,9 @@ public sealed class PluginEntry : IPclNPlugin, IAsyncDisposable
         IPluginProcessService processes = context.Services.Require<IPluginProcessService>();
         IAvaloniaPluginPageService pages = context.Services.Require<IAvaloniaPluginPageService>();
         context.Services.TryGet<IAvaloniaPluginWindowService>(out IAvaloniaPluginWindowService? windows);
-#if TERRACOTTA_PACKAGE_ASSETS
         context.Services.TryGet<IPluginPackageAssetService>(out IPluginPackageAssetService? packageAssets);
-#endif
         context.Services.TryGet<IPluginSecureStorage>(out IPluginSecureStorage? secureStorage);
-        HelperProcessManager helperProcess = new(
-            context,
-            tasks,
-            processes
-#if TERRACOTTA_PACKAGE_ASSETS
-            , packageAssets
-#endif
-            );
+        HelperProcessManager helperProcess = new(context, tasks, processes, packageAssets);
 
         _controller = new TerracottaController(
             context,

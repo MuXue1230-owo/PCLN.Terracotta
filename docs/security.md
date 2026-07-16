@@ -25,7 +25,7 @@
 - Helper 由签名 `.pnp` 的 `runtimes/<rid>/native/` 提供，CI 要求六个目标齐全；
 - SDK 打包器写入 Unix executable mode，安装器依据签名文件路径独立恢复执行位；
 - 插件停用时先正常 shutdown，3 秒内未退出则取消宿主进程任务并终止进程树；
-- SDK 与宿主源码已加入 `pcl.package-assets`，会在返回绝对路径前按签名 PNP 文件表复核大小和 SHA-256；发布下一版 SDK 并升级插件依赖前，`0.1.0` 构建仍无法使用该服务。
+- SDK `0.1.1` 与宿主已提供 `pcl.package-assets`，会在返回绝对路径前按签名 PNP 文件表复核大小和 SHA-256。
 
 ## 日志
 

@@ -12,9 +12,7 @@ public sealed class HelperProcessManager : IAsyncDisposable
     private readonly IPluginContext _context;
     private readonly IPluginTaskService _tasks;
     private readonly IPluginProcessService _processes;
-#if TERRACOTTA_PACKAGE_ASSETS
     private readonly IPluginPackageAssetService? _packageAssets;
-#endif
     private readonly SemaphoreSlim _gate = new(1, 1);
     private CancellationTokenSource? _processCancellation;
     private IPluginTaskRegistration? _processTask;
@@ -26,18 +24,13 @@ public sealed class HelperProcessManager : IAsyncDisposable
     public HelperProcessManager(
         IPluginContext context,
         IPluginTaskService tasks,
-        IPluginProcessService processes
-#if TERRACOTTA_PACKAGE_ASSETS
-        , IPluginPackageAssetService? packageAssets = null
-#endif
-        )
+        IPluginProcessService processes,
+        IPluginPackageAssetService? packageAssets = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _tasks = tasks ?? throw new ArgumentNullException(nameof(tasks));
         _processes = processes ?? throw new ArgumentNullException(nameof(processes));
-#if TERRACOTTA_PACKAGE_ASSETS
         _packageAssets = packageAssets;
-#endif
     }
 
     public PluginProcessResult? LastResult => _lastResult;
@@ -52,11 +45,7 @@ public sealed class HelperProcessManager : IAsyncDisposable
             if (_client is not null)
                 return _client;
 
-            string helperPath = await ResolveHelperPathAsync(
-#if TERRACOTTA_PACKAGE_ASSETS
-                _packageAssets,
-#endif
-                cancellationToken).ConfigureAwait(false);
+            string helperPath = await ResolveHelperPathAsync(cancellationToken).ConfigureAwait(false);
 
             string authenticationToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
             _endpoint = LocalIpcEndpoint.Create(_context.Directories.Temp);
@@ -149,19 +138,32 @@ public sealed class HelperProcessManager : IAsyncDisposable
         _gate.Dispose();
     }
 
-    private static ValueTask<string> ResolveHelperPathAsync(
-#if TERRACOTTA_PACKAGE_ASSETS
-        IPluginPackageAssetService? packageAssets,
-#endif
-        CancellationToken cancellationToken)
+    private async ValueTask<string> ResolveHelperPathAsync(CancellationToken cancellationToken)
     {
         string rid = RuntimePlatformResolver.ResolveCurrentRid();
-#if TERRACOTTA_PACKAGE_ASSETS
-        if (packageAssets is not null)
-            return ResolvePackageAssetAsync(packageAssets, rid, cancellationToken);
-#endif
+        if (_packageAssets is not null)
+        {
+            string relativePath = HelperPackageResolver.GetRelativePath(rid);
+            PluginPackageAssetResult result = await _packageAssets
+                .ResolveAsync(relativePath, cancellationToken)
+                .ConfigureAwait(false);
+            if (!result.IsSuccess)
+            {
+                throw result.Status switch
+                {
+                    PluginPackageAssetStatus.IntegrityFailure => new InvalidOperationException(
+                        $"{ErrorCodeCatalog.HelperIntegrityFailure}: {result.Message ?? "Terracotta Helper integrity verification failed."}"),
+                    PluginPackageAssetStatus.NotFound => new FileNotFoundException(
+                        $"{ErrorCodeCatalog.HelperMissing}: Terracotta Helper is not installed for this platform.",
+                        relativePath),
+                    _ => new InvalidOperationException(
+                        $"{ErrorCodeCatalog.HelperMissing}: {result.Message ?? "Terracotta Helper could not be resolved from the signed package."}")
+                };
+            }
 
-        cancellationToken.ThrowIfCancellationRequested();
+            return result.Asset!.FullPath;
+        }
+
         string assemblyPath = typeof(PluginEntry).Assembly.Location;
         if (string.IsNullOrWhiteSpace(assemblyPath))
         {
@@ -177,36 +179,8 @@ public sealed class HelperProcessManager : IAsyncDisposable
                 helperPath);
         }
 
-        return ValueTask.FromResult(helperPath);
+        return helperPath;
     }
-
-#if TERRACOTTA_PACKAGE_ASSETS
-    private static async ValueTask<string> ResolvePackageAssetAsync(
-        IPluginPackageAssetService packageAssets,
-        string rid,
-        CancellationToken cancellationToken)
-    {
-        string relativePath = HelperPackageResolver.GetRelativePath(rid);
-        PluginPackageAssetResult result = await packageAssets
-            .ResolveAsync(relativePath, cancellationToken)
-            .ConfigureAwait(false);
-        if (!result.IsSuccess)
-        {
-            throw result.Status switch
-            {
-                PluginPackageAssetStatus.IntegrityFailure => new InvalidOperationException(
-                    $"{ErrorCodeCatalog.HelperIntegrityFailure}: {result.Message ?? "Terracotta Helper integrity verification failed."}"),
-                PluginPackageAssetStatus.NotFound => new FileNotFoundException(
-                    $"{ErrorCodeCatalog.HelperMissing}: Terracotta Helper is not installed for this platform.",
-                    relativePath),
-                _ => new InvalidOperationException(
-                    $"{ErrorCodeCatalog.HelperMissing}: {result.Message ?? "Terracotta Helper could not be resolved from the signed package."}")
-            };
-        }
-
-        return result.Asset!.FullPath;
-    }
-#endif
 
     private async ValueTask StopCoreAsync(CancellationToken cancellationToken)
     {

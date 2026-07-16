@@ -16,13 +16,13 @@
 - `secure-storage` 权限白名单修复；
 - SDK Build NuGet 工具目录修复；
 - `.pnp` native mode 写入和 Unix 安装执行位恢复。
-- `pcl.package-assets` 签名文件表解析、路径约束和 SHA-256 复核已在 SDK/宿主源码实现并有回归测试。
+- `pcl.package-assets` 签名文件表解析、路径约束和 SHA-256 复核已在 SDK/宿主源码实现并有回归测试；
+- 已升级到发布版 PCL N Plugin SDK `0.1.1`，移除相邻源码和 `0.1.0` 工具路径兼容；
 - 可选诊断窗口、网络诊断命令、剪贴板复制和脱敏 JSON 报告导出；
 - 身份初始化、secure storage fail-closed 状态处理，以及 Helper 会话内身份种子清零。
 
 ## 正在推进
 
-- 发布包含 `pcl.package-assets` 的下一版 SDK/宿主，升级插件依赖并替代不可用的 `Assembly.Location`；
 - EasyTier 2.6.x 节点生命周期、房间凭据与本地端口转发适配。
 
 ## 后续里程碑
