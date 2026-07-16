@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>PCLN.Terracotta.Plugin</AssemblyName>
+    <RootNamespace>Cn.Pcln.Terracotta</RootNamespace>
+    <Description>Official Terracotta multiplayer plugin for PCL N.</Description>
+    <PclNPluginSdkVersion>0.1.0</PclNPluginSdkVersion>
+    <PclNPluginId>cn.pcln.terracotta</PclNPluginId>
+    <PclNPluginSign>false</PclNPluginSign>
+    <PclNPluginOutputDirectory>$(MSBuildThisFileDirectory)..\..\artifacts\</PclNPluginOutputDirectory>
+    <TerracottaLocalSdkRoot>$(MSBuildThisFileDirectory)..\..\..\PCL-N-Plugin-SDK\src\</TerracottaLocalSdkRoot>
+    <TerracottaUseLocalSdk Condition="'$(TerracottaUseLocalSdk)' == '' and Exists('$(TerracottaLocalSdkRoot)PCL.N.Plugin.Abstractions\PCL.N.Plugin.Abstractions.csproj')">true</TerracottaUseLocalSdk>
+    <TerracottaUseLocalSdk Condition="'$(TerracottaUseLocalSdk)' == ''">false</TerracottaUseLocalSdk>
+    <TerracottaLocalSdkBuildTool>$(TerracottaLocalSdkRoot)PCL.N.Plugin.Sdk.Build\bin\$(Configuration)\net10.0\PCL.N.Plugin.Sdk.Build.dll</TerracottaLocalSdkBuildTool>
+    <PclNPluginBuildTool Condition="'$(PclNPluginBuildTool)' == '' and Exists('$(TerracottaLocalSdkBuildTool)')">$(TerracottaLocalSdkBuildTool)</PclNPluginBuildTool>
+    <!-- PCLN.Plugin.Sdk.Build 0.1.0 accidentally duplicated net10.0 in its package path. -->
+    <PclNPluginBuildTool Condition="'$(PclNPluginBuildTool)' == '' and Exists('$(NuGetPackageRoot)pcln.plugin.sdk.build/0.1.0/tools/net10.0/net10.0/PCL.N.Plugin.Sdk.Build.dll')">$(NuGetPackageRoot)pcln.plugin.sdk.build/0.1.0/tools/net10.0/net10.0/PCL.N.Plugin.Sdk.Build.dll</PclNPluginBuildTool>
+    <TerracottaRequireNativeHelpers Condition="'$(TerracottaRequireNativeHelpers)' == ''">false</TerracottaRequireNativeHelpers>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../PCLN.Terracotta.Contracts/PCLN.Terracotta.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TerracottaUseLocalSdk)' == 'true'">
+    <ProjectReference Include="$(TerracottaLocalSdkRoot)PCL.N.Plugin.Abstractions\PCL.N.Plugin.Abstractions.csproj" />
+    <ProjectReference Include="$(TerracottaLocalSdkRoot)PCL.N.Plugin.UI\PCL.N.Plugin.UI.csproj" />
+    <ProjectReference Include="$(TerracottaLocalSdkRoot)PCL.N.Plugin.UI.Avalonia\PCL.N.Plugin.UI.Avalonia.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TerracottaUseLocalSdk)' != 'true'">
+    <PackageReference Include="PCLN.Plugin.Abstractions" Version="$(PclNPluginSdkVersion)" />
+    <PackageReference Include="PCLN.Plugin.UI" Version="$(PclNPluginSdkVersion)" />
+    <PackageReference Include="PCLN.Plugin.UI.Avalonia" Version="$(PclNPluginSdkVersion)" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="PCLN.Plugin.Sdk" Version="$(PclNPluginSdkVersion)" PrivateAssets="all" />
+    <PackageReference Include="PCLN.Plugin.Analyzers" Version="$(PclNPluginSdkVersion)" PrivateAssets="all" />
+    <PackageReference Include="PCLN.Plugin.Sdk.Build" Version="$(PclNPluginSdkVersion)" PrivateAssets="all" />
+    <AdditionalFiles Include="plugin.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <PclNPluginNative Include="../../native/win-x64/terracotta-helper.exe" RuntimeIdentifier="win-x64" Condition="Exists('../../native/win-x64/terracotta-helper.exe')" />
+    <PclNPluginNative Include="../../native/win-arm64/terracotta-helper.exe" RuntimeIdentifier="win-arm64" Condition="Exists('../../native/win-arm64/terracotta-helper.exe')" />
+    <PclNPluginNative Include="../../native/linux-x64/terracotta-helper" RuntimeIdentifier="linux-x64" Condition="Exists('../../native/linux-x64/terracotta-helper')" />
+    <PclNPluginNative Include="../../native/linux-arm64/terracotta-helper" RuntimeIdentifier="linux-arm64" Condition="Exists('../../native/linux-arm64/terracotta-helper')" />
+    <PclNPluginNative Include="../../native/osx-x64/terracotta-helper" RuntimeIdentifier="osx-x64" Condition="Exists('../../native/osx-x64/terracotta-helper')" />
+    <PclNPluginNative Include="../../native/osx-arm64/terracotta-helper" RuntimeIdentifier="osx-arm64" Condition="Exists('../../native/osx-arm64/terracotta-helper')" />
+  </ItemGroup>
+  <Target Name="ValidateTerracottaNativeHelpers"
+          BeforeTargets="BuildPclNPluginPackage"
+          Condition="'$(TerracottaRequireNativeHelpers)' == 'true'">
+    <Error Condition="!Exists('../../native/win-x64/terracotta-helper.exe')" Text="Terracotta Helper is missing for win-x64." />
+    <Error Condition="!Exists('../../native/win-arm64/terracotta-helper.exe')" Text="Terracotta Helper is missing for win-arm64." />
+    <Error Condition="!Exists('../../native/linux-x64/terracotta-helper')" Text="Terracotta Helper is missing for linux-x64." />
+    <Error Condition="!Exists('../../native/linux-arm64/terracotta-helper')" Text="Terracotta Helper is missing for linux-arm64." />
+    <Error Condition="!Exists('../../native/osx-x64/terracotta-helper')" Text="Terracotta Helper is missing for osx-x64." />
+    <Error Condition="!Exists('../../native/osx-arm64/terracotta-helper')" Text="Terracotta Helper is missing for osx-arm64." />
+  </Target>
+</Project>

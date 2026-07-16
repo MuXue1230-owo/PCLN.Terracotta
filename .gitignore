@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+artifacts/
+native/
+.tools/
+target/
+.idea/
+.vs/
+*.user
+*.suo
+*.pnp
+*.nupkg
+*.snupkg
+*.binlog
+TestResults/

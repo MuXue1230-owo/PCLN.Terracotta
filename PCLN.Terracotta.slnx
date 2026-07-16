@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PCLN.Terracotta.Contracts/PCLN.Terracotta.Contracts.csproj" />
+    <Project Path="src/PCLN.Terracotta.Plugin/PCLN.Terracotta.Plugin.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PCLN.Terracotta.Contracts.Tests/PCLN.Terracotta.Contracts.Tests.csproj" />
+    <Project Path="tests/PCLN.Terracotta.Plugin.Tests/PCLN.Terracotta.Plugin.Tests.csproj" />
+  </Folder>
+</Solution>

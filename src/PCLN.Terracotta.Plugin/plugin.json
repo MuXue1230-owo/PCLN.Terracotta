@@ -1,0 +1,99 @@
+{
+  "formatVersion": 1,
+  "manifestVersion": 1,
+  "id": "cn.pcln.terracotta",
+  "name": "陶瓦联机",
+  "version": "0.1.0-alpha.1",
+  "channel": "alpha",
+  "summary": "PCL N 官方 Minecraft P2P 联机插件。",
+  "description": "通过陶瓦联机 Helper、EasyTier 与 Scaffolding 提供跨启动器的 Minecraft P2P 联机能力。",
+  "publisher": {
+    "id": "github:MuXue1230-owo",
+    "namespace": "cn.pcln"
+  },
+  "license": "Apache-2.0",
+  "entryPoint": {
+    "assembly": "lib/net10.0/PCLN.Terracotta.Plugin.dll",
+    "type": "Cn.Pcln.Terracotta.PluginEntry"
+  },
+  "api": {
+    "minimum": "0.2",
+    "maximumExclusive": "1.0"
+  },
+  "host": {
+    "minimumVersion": "1.1.4"
+  },
+  "services": {
+    "required": {
+      "pcl.logging": ">=0.1 <1.0",
+      "pcl.settings": ">=0.1 <1.0",
+      "pcl.commands": ">=0.1 <1.0",
+      "pcl.tasks": ">=0.1 <1.0",
+      "pcl.instances.read": ">=0.1 <1.0",
+      "pcl.game.sessions": ">=0.1 <1.0",
+      "pcl.game.output": ">=0.1 <1.0",
+      "pcl.launch.events": ">=0.1 <1.0",
+      "pcl.process": ">=0.1 <1.0",
+      "pcl.ui.avalonia.pages": ">=0.1 <1.0"
+    },
+    "optional": {
+      "pcl.ui.avalonia.windows": ">=0.1 <1.0",
+      "pcl.clipboard": ">=0.1 <1.0",
+      "pcl.secure-storage": ">=0.1 <1.0",
+      "pcl.notifications": ">=0.1 <1.0",
+      "pcl.uri-launcher": ">=0.1 <1.0",
+      "pcl.package-assets": ">=0.1 <1.0",
+      "pcl.exports": ">=0.1 <1.0"
+    }
+  },
+  "permissions": [
+    { "id": "ui.register", "reason": "在 PCL N 主导航中注册陶瓦联机页面。" },
+    { "id": "ui.window-management", "reason": "打开陶瓦网络诊断和日志窗口。" },
+    { "id": "launch.observe", "reason": "识别当前运行的 Minecraft 实例，并在游戏结束后关闭联机房间。" },
+    { "id": "game.output.read", "reason": "读取 Minecraft 输出以识别局域网开放地址并诊断联机问题。" },
+    { "id": "process.start", "reason": "启动随插件分发的陶瓦联机核心。" },
+    { "id": "process.input", "reason": "通过标准输入向陶瓦 Helper 传递一次性 IPC 鉴权密钥。" },
+    { "id": "process.output", "reason": "读取陶瓦联机核心的启动结果和错误信息。" },
+    { "id": "process.terminate", "reason": "在退出房间、停用插件或核心无响应时终止陶瓦联机核心。" },
+    { "id": "clipboard.write", "reason": "复制房间码、联机地址和诊断信息。" },
+    { "id": "secure-storage", "reason": "使用系统安全存储保存陶瓦身份密钥和认证信息。" },
+    { "id": "network", "reason": "执行节点发现、NAT 穿透、P2P 联机和中继连接。" }
+  ],
+  "ui": {
+    "api": { "minimum": "0.1", "maximumExclusive": "1.0" },
+    "avalonia": { "minimum": "12.0", "maximumExclusive": "13.0" },
+    "targets": [
+      {
+        "target": "pcl.navigation.main",
+        "surface": ">=1.0 <2.0",
+        "access": ["register"],
+        "operations": [
+          {
+            "id": "cn.pcln.terracotta.page-registration",
+            "kind": "register",
+            "required": true,
+            "fallback": "fail-load"
+          }
+        ]
+      },
+      {
+        "target": "pcl.window.main",
+        "surface": ">=1.0 <2.0",
+        "access": ["window-management"],
+        "operations": [
+          {
+            "id": "cn.pcln.terracotta.diagnostics-window-registration",
+            "kind": "register",
+            "required": false,
+            "fallback": "disable-feature"
+          }
+        ]
+      }
+    ]
+  },
+  "signing": {
+    "fingerprint": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  "categories": ["multiplayer", "network"],
+  "tags": ["terracotta", "p2p", "easytier", "scaffolding"]
+}

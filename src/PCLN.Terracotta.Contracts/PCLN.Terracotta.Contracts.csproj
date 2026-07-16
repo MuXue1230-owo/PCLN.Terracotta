@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>PCLN.Terracotta.Contracts</AssemblyName>
+    <RootNamespace>Cn.Pcln.Terracotta.Contracts</RootNamespace>
+    <Description>Stable IPC and plugin-to-plugin contracts for the PCL N Terracotta plugin.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageId>PCLN.Terracotta.Contracts</PackageId>
+  </PropertyGroup>
+</Project>

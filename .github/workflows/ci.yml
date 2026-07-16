@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dotnet:
+    name: .NET (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet test PCLN.Terracotta.slnx -c Release --nologo --disable-build-servers -m:1
+
+  helper-test:
+    name: Helper tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path src/Terracotta.Helper/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path src/Terracotta.Helper/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path src/Terracotta.Helper/Cargo.toml --locked --all-targets
+
+  helper-build:
+    name: Helper ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, rid: win-x64, executable: terracotta-helper.exe }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc, rid: win-arm64, executable: terracotta-helper.exe }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, rid: linux-x64, executable: terracotta-helper }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, rid: linux-arm64, executable: terracotta-helper }
+          - { os: macos-latest, target: x86_64-apple-darwin, rid: osx-x64, executable: terracotta-helper }
+          - { os: macos-latest, target: aarch64-apple-darwin, rid: osx-arm64, executable: terracotta-helper }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux ARM64 linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+      - run: cargo build --manifest-path src/Terracotta.Helper/Cargo.toml --locked --release --target ${{ matrix.target }}
+      - name: Stage Helper
+        shell: bash
+        run: |
+          mkdir -p "native/${{ matrix.rid }}"
+          cp "src/Terracotta.Helper/target/${{ matrix.target }}/release/${{ matrix.executable }}" "native/${{ matrix.rid }}/${{ matrix.executable }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-${{ matrix.rid }}
+          path: native/${{ matrix.rid }}
+          if-no-files-found: error
+
+  package:
+    name: Build signed-development PNP
+    runs-on: ubuntu-latest
+    needs: [dotnet, helper-test, helper-build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: helper-*
+          path: native
+      - name: Normalize Helper artifact directories
+        shell: bash
+        run: |
+          for directory in native/helper-*; do
+            rid="${directory#native/helper-}"
+            mv "$directory" "native/$rid"
+          done
+      - run: dotnet build src/PCLN.Terracotta.Plugin/PCLN.Terracotta.Plugin.csproj -c Release --nologo -p:TerracottaRequireNativeHelpers=true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terracotta-pnp
+          path: artifacts/*.pnp
+          if-no-files-found: error

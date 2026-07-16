@@ -1,0 +1,82 @@
+# 本地 IPC 协议
+
+## 传输
+
+- Windows：`\\.\pipe\pcln-terracotta-<32 lowercase hex>`；
+- Linux/macOS：绝对路径 `terracotta-<32 lowercase hex>.sock`；
+- 每一帧由 4 字节 little-endian `u32` 长度和 UTF-8 JSON 组成；
+- 长度必须在 `1..=1_048_576`，超限在分配 payload 前拒绝；
+- 第一阶段每个 Helper 只允许一个本地客户端，串行处理请求形成自然背压。
+
+## Envelope
+
+```json
+{
+  "protocol": 1,
+  "id": "request-1",
+  "type": "room.status",
+  "payload": {}
+}
+```
+
+`id` 必须是 1–128 个可打印 ASCII 字符，且在连接内唯一。未知 JSON 字段被忽略，以允许同一协议版本增加可选字段。
+
+## 握手
+
+插件启动 Helper 前生成 32 字节随机数，并把 64 字节小写十六进制表示写入 Helper stdin。首帧必须在 5 秒内发送同一值：
+
+```json
+{
+  "protocol": 1,
+  "id": "request-1",
+  "type": "hello",
+  "payload": {
+    "authToken": "<64 lowercase hex>",
+    "client": "pcln",
+    "clientVersion": "0.1.0-alpha.1"
+  }
+}
+```
+
+成功响应：
+
+```json
+{
+  "protocol": 1,
+  "id": "request-1",
+  "type": "hello.accepted",
+  "payload": {
+    "helperVersion": "0.1.0",
+    "capabilities": [
+      "identity.initialize",
+      "room.create",
+      "room.join",
+      "room.leave",
+      "room.status",
+      "room.set-lan-address",
+      "network.diagnose",
+      "shutdown"
+    ]
+  }
+}
+```
+
+鉴权使用恒定时间比较；原始 JSON 缓冲区和解析后的 Secret 会在使用后清零。失败只返回通用错误，不记录 payload。
+
+## 已实现消息
+
+| 请求 | 响应 | 状态 |
+|---|---|---|
+| `hello` | `hello.accepted` | 已实现 |
+| `identity.initialize` | `identity.initialized` / `error` | 已实现；建房或入房前必须完成 |
+| `room.status` | `room.status.result` | 已实现，返回当前房间快照 |
+| `room.leave` | `room.left` | 已实现并清理后端 |
+| `shutdown` | `shutdown.accepted` 后 EOF | 已实现 |
+| `room.create` | `room.created` / `error` | 已接房间服务；生产 EasyTier 后端待接入 |
+| `room.join` | `room.joined` / `error` | 已接房间服务；生产 EasyTier 后端待接入 |
+| `room.set-lan-address` | `room.state-changed` | 已实现，仅房主 Connected 状态可用 |
+| `network.diagnose` | `diagnostic.updated` | 已实现，后端返回网络快照 |
+
+未知消息返回 `ipc.unknown-message-type`；重复请求 ID 返回 `ipc.duplicate-request-id`；单连接最多记录 4096 个请求 ID。
+
+房间服务会独立校验 Minecraft 地址必须为 loopback、端口非零、会话 ID 有界，并把房间码规范化为 `XXXX-XXXX-XXXX`。生产网络后端未安装时，创建或加入会进入 `Faulted` 并返回 `room.backend-not-ready`；测试通过注入后端验证完整成功路径。
