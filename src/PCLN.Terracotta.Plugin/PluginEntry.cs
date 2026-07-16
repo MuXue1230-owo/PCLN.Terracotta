@@ -59,6 +59,7 @@ public sealed class PluginEntry : IPclNPlugin, IAsyncDisposable
         }
 
         _controller.RegisterCommands();
+        PluginExportRegistrar.Register(context, _controller);
         _controller.Start();
         context.Logger.Info("Terracotta plugin initialized.");
         return ValueTask.CompletedTask;

@@ -9,8 +9,15 @@ using System.Text;
 
 namespace Cn.Pcln.Terracotta.Application;
 
-public sealed class TerracottaController : ITerracottaRoomService, IAsyncDisposable
+public sealed class TerracottaController :
+    ITerracottaRoomService,
+    ITerracottaNetworkStatusService,
+    ITerracottaSessionService,
+    ITerracottaDiagnosticsService,
+    IAsyncDisposable
 {
+    private static readonly TimeSpan StatusPollInterval = TimeSpan.FromSeconds(3);
+
     private readonly IPluginContext _context;
     private readonly PluginStateStore _stateStore;
     private readonly IPluginCommandService _commands;
@@ -29,6 +36,7 @@ public sealed class TerracottaController : ITerracottaRoomService, IAsyncDisposa
     private TerracottaCreateRoomRequest? _pendingCreate;
     private TerracottaSettings _settings = new();
     private bool _started;
+    private CancellationTokenSource? _statusPollCts;
 
     public TerracottaController(
         IPluginContext context,
@@ -59,6 +67,10 @@ public sealed class TerracottaController : ITerracottaRoomService, IAsyncDisposa
     public event EventHandler<TerracottaRoomSnapshot>? SnapshotChanged;
 
     public TerracottaRoomSnapshot CurrentRoom => _snapshot;
+
+    public TerracottaNetworkStatus? CurrentNetwork => _snapshot.Network;
+
+    public string? BoundGameSessionId => _snapshot.GameSessionId ?? _pendingCreate?.GameSessionId;
 
     public void Start()
     {
@@ -95,7 +107,7 @@ public sealed class TerracottaController : ITerracottaRoomService, IAsyncDisposa
 
     public void QueueCopyRoomCode() => QueueOperation("copy-room-code", CopyRoomCodeAsync);
 
-    public void QueueDiagnose() => QueueOperation("diagnose", DiagnoseAsync);
+    public void QueueDiagnose() => QueueOperation("diagnose", RunDiagnoseCommandAsync);
 
     public void QueueCopyDiagnostics() => QueueOperation("copy-diagnostics", CopyDiagnosticsAsync);
 
@@ -164,6 +176,7 @@ public sealed class TerracottaController : ITerracottaRoomService, IAsyncDisposa
                 cancellationToken).ConfigureAwait(false);
             _stateMachine.TransitionTo(TerracottaRoomState.Connected);
             Publish(connected with { State = TerracottaRoomState.Connected });
+            StartStatusPolling();
             await PersistSelectedSessionAsync(selection.Selected.SessionId, cancellationToken).ConfigureAwait(false);
             if (_settings.AutoCopyRoomCode)
                 await CopyRoomCodeAsync(cancellationToken).ConfigureAwait(false);
@@ -213,6 +226,7 @@ public sealed class TerracottaController : ITerracottaRoomService, IAsyncDisposa
                 cancellationToken).ConfigureAwait(false);
             _stateMachine.TransitionTo(TerracottaRoomState.Connected);
             Publish(connected with { State = TerracottaRoomState.Connected });
+            StartStatusPolling();
             if (connected.GameSessionId is not null)
                 await PersistSelectedSessionAsync(connected.GameSessionId, cancellationToken).ConfigureAwait(false);
             if (request.AutoCopyConnectAddress && _settings.AutoCopyConnectAddress)
@@ -235,6 +249,7 @@ public sealed class TerracottaController : ITerracottaRoomService, IAsyncDisposa
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            StopStatusPolling();
             _pendingCreate = null;
             if (_stateMachine.State == TerracottaRoomState.Idle)
                 return;
@@ -262,8 +277,119 @@ public sealed class TerracottaController : ITerracottaRoomService, IAsyncDisposa
         }
     }
 
+    public async ValueTask<TerracottaRoomSnapshot> RefreshStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (_snapshot.State is not (TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting or TerracottaRoomState.Diagnosing))
+            return _snapshot;
+
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            TerracottaRoomSnapshot helperSnapshot = await _helper.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+            if (helperSnapshot.State is TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting)
+            {
+                Publish(helperSnapshot with
+                {
+                    // Keep plugin-facing lifecycle unless helper reports a hard fault.
+                    State = _stateMachine.State == TerracottaRoomState.Diagnosing
+                        ? TerracottaRoomState.Diagnosing
+                        : helperSnapshot.State
+                });
+            }
+            else if (helperSnapshot.State == TerracottaRoomState.Faulted)
+            {
+                StopStatusPolling();
+                _stateMachine.TransitionTo(TerracottaRoomState.Faulted);
+                Publish(helperSnapshot);
+            }
+            return _snapshot;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Soft-fail status polling so a transient IPC blip does not drop the room.
+            _context.Logger.Warn($"Terracotta status refresh failed: {exception.Message}");
+            return _snapshot;
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    public TerracottaSessionSelection SelectRunningSession(
+        string? explicitSessionId = null,
+        string? preferredInstanceId = null,
+        bool selectMostRecent = true)
+    {
+        GameSessionSelection selection = _sessions.Select(
+            explicitSessionId,
+            preferredInstanceId ?? _settings.LastSelectedInstanceId,
+            selectMostRecent);
+        return new TerracottaSessionSelection(
+            selection.Selected?.SessionId,
+            selection.Selected?.InstanceId,
+            selection.Selected?.InstanceId,
+            selection.Candidates.Count,
+            selection.Reason ?? "No selection");
+    }
+
+    public async ValueTask<TerracottaNetworkStatus> DiagnoseAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_snapshot.State is not (TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting or TerracottaRoomState.Diagnosing))
+                throw new InvalidOperationException("Network diagnostics require an active Terracotta room.");
+
+            TerracottaRoomState previous = _stateMachine.State;
+            if (previous != TerracottaRoomState.Diagnosing)
+            {
+                _stateMachine.TransitionTo(TerracottaRoomState.Diagnosing);
+                Publish(_snapshot with { State = TerracottaRoomState.Diagnosing });
+            }
+
+            TerracottaNetworkStatus network = await _helper.DiagnoseAsync(cancellationToken).ConfigureAwait(false);
+            if (_stateMachine.State == TerracottaRoomState.Diagnosing && previous != TerracottaRoomState.Diagnosing)
+                _stateMachine.TransitionTo(previous == TerracottaRoomState.Reconnecting
+                    ? TerracottaRoomState.Reconnecting
+                    : TerracottaRoomState.Connected);
+            Publish(_snapshot with
+            {
+                State = _stateMachine.State,
+                Network = network
+            });
+            return network;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            Fault(exception);
+            throw;
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    public async ValueTask<string?> ExportDiagnosticReportAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_context.Services.TryGet(out IPluginFileService? files) || files is null)
+            return null;
+
+        string report = CreateDiagnosticReportJson();
+        byte[] content = Encoding.UTF8.GetBytes(report);
+        string timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+        string relativePath = $"diagnostics/terracotta-{timestamp}.json";
+        await files.WriteAsync(relativePath, content, cancellationToken).ConfigureAwait(false);
+        await files.WriteAsync("diagnostics/latest.json", content, cancellationToken).ConfigureAwait(false);
+        return relativePath;
+    }
+
     public async ValueTask DisposeAsync()
     {
+        StopStatusPolling();
         try
         {
             await LeaveAsync(CancellationToken.None).ConfigureAwait(false);
@@ -442,51 +568,88 @@ public sealed class TerracottaController : ITerracottaRoomService, IAsyncDisposa
             notifications.ShowWarning("当前宿主未提供插件窗口服务，可使用“导出陶瓦诊断”命令生成报告。");
     }
 
-    private async Task DiagnoseAsync(CancellationToken cancellationToken)
+    private async Task RunDiagnoseCommandAsync(CancellationToken cancellationToken)
     {
-        if (_snapshot.State is not (TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting))
+        if (_snapshot.State is not (TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting or TerracottaRoomState.Diagnosing))
         {
-            if (_context.Services.TryGet<IPluginNotificationService>(out IPluginNotificationService? unavailable) && unavailable is not null)
+            if (_context.Services.TryGet(out IPluginNotificationService? unavailable) && unavailable is not null)
                 unavailable.ShowInformation("进入陶瓦房间后才能运行网络诊断。");
             return;
         }
 
         try
         {
-            TerracottaNetworkStatus network = await _helper.DiagnoseAsync(cancellationToken).ConfigureAwait(false);
-            Publish(_snapshot with { Network = network });
-            if (_context.Services.TryGet<IPluginNotificationService>(out IPluginNotificationService? completed) && completed is not null)
+            TerracottaNetworkStatus network = await DiagnoseAsync(cancellationToken).ConfigureAwait(false);
+            if (_context.Services.TryGet(out IPluginNotificationService? completed) && completed is not null)
                 completed.ShowInformation(network.IsHealthy ? "陶瓦网络状态正常。" : "陶瓦网络存在异常，请导出诊断报告。");
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            Fault(exception);
+            // Fault already applied by the public DiagnoseAsync implementation.
+            if (_snapshot.State != TerracottaRoomState.Faulted)
+                Fault(exception);
         }
     }
 
     private async Task CopyDiagnosticsAsync(CancellationToken cancellationToken)
     {
-        if (_context.Services.TryGet<IPluginClipboardService>(out IPluginClipboardService? clipboard) && clipboard is not null)
+        if (_context.Services.TryGet(out IPluginClipboardService? clipboard) && clipboard is not null)
             await clipboard.WriteTextAsync(CreateDiagnosticReportJson(), cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ExportDiagnosticsAsync(CancellationToken cancellationToken)
     {
-        if (!_context.Services.TryGet<IPluginFileService>(out IPluginFileService? files) || files is null)
+        string? path = await ExportDiagnosticReportAsync(cancellationToken).ConfigureAwait(false);
+        if (path is null)
         {
-            if (_context.Services.TryGet<IPluginNotificationService>(out IPluginNotificationService? unavailable) && unavailable is not null)
+            if (_context.Services.TryGet(out IPluginNotificationService? unavailable) && unavailable is not null)
                 unavailable.ShowWarning("当前宿主未提供插件文件服务，无法保存诊断报告。");
             return;
         }
 
-        string report = CreateDiagnosticReportJson();
-        byte[] content = Encoding.UTF8.GetBytes(report);
-        string timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
-        string relativePath = $"diagnostics/terracotta-{timestamp}.json";
-        await files.WriteAsync(relativePath, content, cancellationToken).ConfigureAwait(false);
-        await files.WriteAsync("diagnostics/latest.json", content, cancellationToken).ConfigureAwait(false);
-        if (_context.Services.TryGet<IPluginNotificationService>(out IPluginNotificationService? completed) && completed is not null)
-            completed.ShowInformation($"陶瓦诊断已保存到插件数据目录：{relativePath}");
+        if (_context.Services.TryGet(out IPluginNotificationService? completed) && completed is not null)
+            completed.ShowInformation($"陶瓦诊断已保存到插件数据目录：{path}");
+    }
+
+    private void StartStatusPolling()
+    {
+        StopStatusPolling();
+        CancellationTokenSource cts = new();
+        _statusPollCts = cts;
+        _context.Lifetime.Track(_tasks.Run($"{PluginIds.Plugin}.status-poll", async token =>
+        {
+            using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(token, cts.Token);
+            while (!linked.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(StatusPollInterval, linked.Token).ConfigureAwait(false);
+                    if (_snapshot.State is TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting)
+                        await RefreshStatusAsync(linked.Token).ConfigureAwait(false);
+                    else
+                        break;
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }));
+    }
+
+    private void StopStatusPolling()
+    {
+        CancellationTokenSource? cts = Interlocked.Exchange(ref _statusPollCts, null);
+        if (cts is null)
+            return;
+        try
+        {
+            cts.Cancel();
+        }
+        finally
+        {
+            cts.Dispose();
+        }
     }
 
     private async Task RestartHelperAsync(CancellationToken cancellationToken)

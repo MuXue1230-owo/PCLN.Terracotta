@@ -4,6 +4,7 @@ mod discovery;
 mod easytier;
 mod mesh;
 mod port_forward;
+mod quality;
 
 pub use backend::EasyTierRoomBackend;
 pub use credentials::{RoomCredentials, machine_id_from_identity, normalize_room_code};

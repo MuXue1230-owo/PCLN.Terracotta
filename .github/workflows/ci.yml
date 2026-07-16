@@ -69,6 +69,43 @@ jobs:
         run: |
           mkdir -p "native/${{ matrix.rid }}"
           cp "src/Terracotta.Helper/target/${{ matrix.target }}/release/${{ matrix.executable }}" "native/${{ matrix.rid }}/${{ matrix.executable }}"
+      - name: Stage optional EasyTier sidecar
+        shell: bash
+        env:
+          EASYTIER_VERSION: ${{ vars.EASYTIER_VERSION }}
+        run: |
+          set -euo pipefail
+          version="${EASYTIER_VERSION:-}"
+          if [[ -z "$version" ]]; then
+            echo "EASYTIER_VERSION repository variable is unset; packaging helper-only native assets."
+            exit 0
+          fi
+          # Optional opt-in: set repo variable EASYTIER_VERSION (e.g. 2.6.4) to download official EasyTier assets.
+          rid="${{ matrix.rid }}"
+          case "$rid" in
+            win-x64) asset="easytier-windows-x86_64.zip"; bin="easytier-core.exe" ;;
+            win-arm64) asset="easytier-windows-arm64.zip"; bin="easytier-core.exe" ;;
+            linux-x64) asset="easytier-linux-x86_64.zip"; bin="easytier-core" ;;
+            linux-arm64) asset="easytier-linux-aarch64.zip"; bin="easytier-core" ;;
+            osx-x64) asset="easytier-macos-x86_64.zip"; bin="easytier-core" ;;
+            osx-arm64) asset="easytier-macos-aarch64.zip"; bin="easytier-core" ;;
+            *) echo "Unknown RID $rid"; exit 1 ;;
+          esac
+          url="https://github.com/EasyTier/EasyTier/releases/download/v${version}/${asset}"
+          tmp="$(mktemp -d)"
+          if ! curl -fsSL "$url" -o "$tmp/$asset"; then
+            echo "Failed to download $url; continuing without EasyTier sidecar."
+            exit 0
+          fi
+          unzip -qo "$tmp/$asset" -d "$tmp/out"
+          found="$(find "$tmp/out" -type f -name "$bin" | head -n 1 || true)"
+          if [[ -z "$found" ]]; then
+            echo "EasyTier archive did not contain $bin; continuing without sidecar."
+            exit 0
+          fi
+          cp "$found" "native/${rid}/$bin"
+          chmod +x "native/${rid}/$bin" || true
+          echo "Staged EasyTier sidecar $bin for $rid"
       - uses: actions/upload-artifact@v4
         with:
           name: helper-${{ matrix.rid }}

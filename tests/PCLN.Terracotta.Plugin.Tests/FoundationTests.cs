@@ -20,10 +20,31 @@ public sealed class FoundationTests
         machine.TransitionTo(TerracottaRoomState.WaitingForLan);
         machine.TransitionTo(TerracottaRoomState.Creating);
         machine.TransitionTo(TerracottaRoomState.Connected);
+        machine.TransitionTo(TerracottaRoomState.Diagnosing);
+        machine.TransitionTo(TerracottaRoomState.Connected);
         machine.TransitionTo(TerracottaRoomState.Leaving);
         machine.TransitionTo(TerracottaRoomState.Idle);
 
         Assert.AreEqual(TerracottaRoomState.Idle, machine.State);
+    }
+
+    [TestMethod]
+    public void ExportNamesMatchStablePluginContractIds()
+    {
+        // Compare through variables so analyzers do not fold const-to-const assertions.
+        string[] expected = ["room-service", "session-service", "network-status", "diagnostics"];
+        string[] actual =
+        [
+            TerracottaExportNames.RoomService,
+            TerracottaExportNames.SessionService,
+            TerracottaExportNames.NetworkStatus,
+            TerracottaExportNames.Diagnostics
+        ];
+        CollectionAssert.AreEqual(expected, actual);
+        Assert.AreEqual(PluginIds.ExportRoomService, actual[0]);
+        Assert.AreEqual(PluginIds.ExportSessionService, actual[1]);
+        Assert.AreEqual(PluginIds.ExportNetworkStatus, actual[2]);
+        Assert.AreEqual(PluginIds.ExportDiagnostics, actual[3]);
     }
 
     [TestMethod]
@@ -82,7 +103,7 @@ public sealed class FoundationTests
         PluginProcessResult process = new(1, "token=abc123", "private-key:xyz");
 
         string json = DiagnosticCollector.CreateJson(
-            "0.1.0-alpha.3",
+            "0.1.0-alpha.4",
             "0.1.0",
             snapshot,
             process,

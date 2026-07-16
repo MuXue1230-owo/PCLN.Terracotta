@@ -33,7 +33,7 @@
   "payload": {
     "authToken": "<64 lowercase hex>",
     "client": "pcln",
-    "clientVersion": "0.1.0-alpha.3"
+    "clientVersion": "0.1.0-alpha.4"
   }
 }
 ```
@@ -69,7 +69,7 @@
 |---|---|---|
 | `hello` | `hello.accepted` | 已实现 |
 | `identity.initialize` | `identity.initialized` / `error` | 已实现；建房或入房前必须完成 |
-| `room.status` | `room.status.result` | 已实现，返回当前房间快照 |
+| `room.status` | `room.status.result` | 已实现；会触发后端 refresh（成员/RTT） |
 | `room.leave` | `room.left` | 已实现并清理后端 |
 | `shutdown` | `shutdown.accepted` 后 EOF | 已实现 |
 | `room.create` | `room.created` / `error` | mesh ingress + EasyTier host；缺 sidecar 时 `network.easytier-missing` |

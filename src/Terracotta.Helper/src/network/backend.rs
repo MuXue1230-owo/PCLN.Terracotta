@@ -10,8 +10,8 @@ use zeroize::Zeroizing;
 
 use crate::{
     room::{
-        BackendRoom, ConnectionMode, CreateRoomRequest, JoinRoomRequest, NetworkStatus,
-        RoomBackend, RoomError, RoomMember,
+        BackendRefresh, BackendRoom, ConnectionMode, CreateRoomRequest, JoinRoomRequest,
+        NetworkStatus, RoomBackend, RoomError, RoomMember,
     },
     scaffolding::{PlayerKind, PlayerProfile, ScaffoldingClient, ScaffoldingServer, ServerContext},
 };
@@ -28,6 +28,7 @@ use super::{
     },
     mesh::{HOST_VIRTUAL_IPV4, MeshEndpoints},
     port_forward::PortForward,
+    quality::{members_from_profiles, network_from_probe, probe_tcp_rtt},
 };
 
 const LOCAL_DISCOVERY_ATTEMPTS: u32 = 8;
@@ -41,10 +42,13 @@ struct HostSession {
     easytier: EasyTierNode,
     scaffolding_shutdown: watch::Sender<bool>,
     scaffolding_task: tokio::task::JoinHandle<Result<(), crate::scaffolding::ScaffoldingError>>,
+    scaffolding_context: Arc<ServerContext>,
     scaffolding_addr: SocketAddr,
     minecraft: SocketAddr,
     mesh_scaffolding_ingress: PortForward,
     mesh_minecraft_ingress: PortForward,
+    prefer_direct: bool,
+    allow_relay: bool,
 }
 
 struct MemberSession {
@@ -52,7 +56,10 @@ struct MemberSession {
     /// Present when join used same-machine discovery instead of EasyTier port-forward.
     scaffolding_forward: Option<PortForward>,
     minecraft_forward: Option<PortForward>,
+    local_scaffolding: SocketAddr,
     local_minecraft: SocketAddr,
+    prefer_direct: bool,
+    allow_relay: bool,
 }
 
 enum ActiveSession {
@@ -263,10 +270,13 @@ impl RoomBackend for EasyTierRoomBackend {
             easytier,
             scaffolding_shutdown: shutdown_tx,
             scaffolding_task,
+            scaffolding_context: context,
             scaffolding_addr,
             minecraft,
             mesh_scaffolding_ingress,
             mesh_minecraft_ingress,
+            prefer_direct: request.prefer_direct,
+            allow_relay: request.allow_relay,
         }));
 
         tracing::info!(
@@ -341,7 +351,10 @@ impl RoomBackend for EasyTierRoomBackend {
             easytier,
             scaffolding_forward: None,
             minecraft_forward: None,
+            local_scaffolding,
             local_minecraft,
+            prefer_direct: true,
+            allow_relay: true,
         }));
         Ok(room)
     }
@@ -426,6 +439,7 @@ impl RoomBackend for EasyTierRoomBackend {
         // Swap replacements in, then stop the previous ingresses (which own the old sockets).
         host.scaffolding_shutdown = shutdown_tx;
         host.scaffolding_task = scaffolding_task;
+        host.scaffolding_context = context;
         host.scaffolding_addr = scaffolding_addr;
         host.minecraft = address;
         let previous_scaffolding =
@@ -445,43 +459,62 @@ impl RoomBackend for EasyTierRoomBackend {
     }
 
     async fn diagnose(&self) -> Result<NetworkStatus, RoomError> {
-        let guard = self.session.lock().await;
-        match guard.as_ref() {
-            Some(ActiveSession::Host(_)) => Ok(NetworkStatus {
-                nat_type: Some("Unknown".into()),
-                connection_mode: ConnectionMode::Direct,
-                round_trip_time_milliseconds: Some(0),
-                packet_loss_percent: Some(0.0),
-                relay_node: None,
-                is_healthy: true,
-            }),
-            Some(ActiveSession::Member(member)) => {
-                let reachable = timeout(
-                    Duration::from_secs(2),
-                    TcpStream::connect(member.local_minecraft),
-                )
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .is_some();
-                Ok(NetworkStatus {
-                    nat_type: Some("Unknown".into()),
-                    connection_mode: if reachable {
-                        ConnectionMode::Direct
-                    } else {
-                        ConnectionMode::Unknown
-                    },
-                    round_trip_time_milliseconds: None,
-                    packet_loss_percent: None,
-                    relay_node: None,
-                    is_healthy: reachable,
-                })
-            }
-            None => Err(RoomError::new(
+        let refresh = self.refresh().await?;
+        refresh.network.ok_or_else(|| {
+            RoomError::new(
                 "room.not-connected",
                 "Network diagnostics require an active room.",
                 false,
-            )),
+            )
+        })
+    }
+
+    async fn refresh(&self) -> Result<BackendRefresh, RoomError> {
+        let guard = self.session.lock().await;
+        match guard.as_ref() {
+            Some(ActiveSession::Host(host)) => {
+                let rtt_ms = probe_tcp_rtt(host.minecraft).await;
+                let network = network_from_probe(rtt_ms, host.prefer_direct, host.allow_relay);
+                let profiles = host.scaffolding_context.player_profiles().await;
+                let members = members_from_profiles(profiles, rtt_ms, network.connection_mode);
+                Ok(BackendRefresh {
+                    network: Some(network),
+                    members: Some(members),
+                    local_address: None,
+                })
+            }
+            Some(ActiveSession::Member(member)) => {
+                let rtt_ms = probe_tcp_rtt(member.local_minecraft).await;
+                let network = network_from_probe(rtt_ms, member.prefer_direct, member.allow_relay);
+                // Best-effort Scaffolding member list over the local forward.
+                let members = match ScaffoldingClient::connect(
+                    member.local_scaffolding,
+                    PlayerProfile {
+                        name: "Probe".into(),
+                        machine_id: format!("probe-{}", now_unix_seconds()),
+                        vendor: "PCL N Terracotta".into(),
+                        kind: Some(PlayerKind::Guest),
+                    },
+                )
+                .await
+                {
+                    Ok(mut client) => match client.heartbeat().await {
+                        Ok(heartbeat) => Some(members_from_profiles(
+                            heartbeat.players,
+                            Some(heartbeat.latency.as_millis().min(u128::from(u32::MAX)) as u32),
+                            network.connection_mode,
+                        )),
+                        Err(_) => None,
+                    },
+                    Err(_) => None,
+                };
+                Ok(BackendRefresh {
+                    network: Some(network),
+                    members,
+                    local_address: Some(member.local_minecraft.to_string()),
+                })
+            }
+            None => Ok(BackendRefresh::default()),
         }
     }
 
@@ -573,6 +606,7 @@ impl EasyTierRoomBackend {
             },
             members,
         };
+        let local_scaffolding = scaffolding_forward.local_addr();
         let local_minecraft = minecraft_forward.local_addr();
         drop(credentials);
 
@@ -580,7 +614,10 @@ impl EasyTierRoomBackend {
             easytier,
             scaffolding_forward: Some(scaffolding_forward),
             minecraft_forward: Some(minecraft_forward),
+            local_scaffolding,
             local_minecraft,
+            prefer_direct: true,
+            allow_relay: true,
         }));
         Ok(room)
     }

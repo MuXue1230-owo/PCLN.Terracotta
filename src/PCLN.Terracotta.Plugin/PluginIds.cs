@@ -17,4 +17,9 @@ public static class PluginIds
     public const string ExportDiagnosticsCommand = Plugin + ".export-diagnostics";
     public const string RestartHelperCommand = Plugin + ".restart-helper";
     public const string OpenHelpCommand = Plugin + ".open-help";
+
+    public const string ExportRoomService = "room-service";
+    public const string ExportSessionService = "session-service";
+    public const string ExportNetworkStatus = "network-status";
+    public const string ExportDiagnostics = "diagnostics";
 }

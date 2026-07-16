@@ -27,7 +27,7 @@ public static class DiagnosticCollector
             helperVersion,
             ProtocolVersion.Current,
             "legacy-v1-compatible",
-            "2.6.x-sidecar",
+            "2.6.x-sidecar-optional",
             RuntimeInformation.OSDescription,
             RuntimeInformation.ProcessArchitecture.ToString(),
             snapshot.State,

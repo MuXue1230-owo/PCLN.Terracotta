@@ -56,3 +56,9 @@ $env:TERRACOTTA_EASYTIER_PATH = "C:\path\to\easytier-core.exe"
 # 若 userspace 路由不足：
 $env:TERRACOTTA_EASYTIER_ALLOW_TUN = "1"
 ```
+
+EasyTier 打包：
+
+- 将各 RID 的 `easytier-core[.exe]` 放到 `native/<rid>/` 后与 Helper 一并进入 `.pnp`；
+- CI 若设置仓库变量 `EASYTIER_VERSION`（如 `2.6.4`），会尝试从 EasyTier GitHub Release 下载；
+- 正式强制门禁：`dotnet build ... -p:TerracottaRequireEasyTier=true`。

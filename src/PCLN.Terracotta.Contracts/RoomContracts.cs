@@ -78,6 +78,8 @@ public interface ITerracottaRoomService
 {
     TerracottaRoomSnapshot CurrentRoom { get; }
 
+    event EventHandler<TerracottaRoomSnapshot>? SnapshotChanged;
+
     ValueTask<TerracottaRoomSnapshot> CreateAsync(
         TerracottaCreateRoomRequest request,
         CancellationToken cancellationToken = default);
@@ -87,4 +89,8 @@ public interface ITerracottaRoomService
         CancellationToken cancellationToken = default);
 
     ValueTask LeaveAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Pulls the latest helper room snapshot when a room is active.</summary>
+    ValueTask<TerracottaRoomSnapshot> RefreshStatusAsync(
+        CancellationToken cancellationToken = default);
 }

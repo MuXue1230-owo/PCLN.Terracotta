@@ -478,7 +478,7 @@ mod tests {
                 json!({
                     "authToken": token,
                     "client": "pcln",
-                    "clientVersion": "0.1.0-alpha.3"
+                    "clientVersion": "0.1.0-alpha.4"
                 }),
             ),
         )
@@ -526,7 +526,7 @@ mod tests {
                 json!({
                     "authToken": supplied,
                     "client": "pcln",
-                    "clientVersion": "0.1.0-alpha.3"
+                    "clientVersion": "0.1.0-alpha.4"
                 }),
             ),
         )
@@ -559,7 +559,7 @@ mod tests {
                 json!({
                     "authToken": token,
                     "client": "pcln",
-                    "clientVersion": "0.1.0-alpha.3"
+                    "clientVersion": "0.1.0-alpha.4"
                 }),
             ),
         )

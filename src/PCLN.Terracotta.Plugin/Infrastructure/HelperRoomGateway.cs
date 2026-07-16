@@ -72,6 +72,17 @@ public sealed class HelperRoomGateway(
             cancellationToken).ConfigureAwait(false);
     }
 
+    public async ValueTask<TerracottaRoomSnapshot> GetStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        HelperIpcClient client = await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+        return await client.SendAsync<object, TerracottaRoomSnapshot>(
+            HelperMessageTypes.RoomStatus,
+            new { },
+            HelperMessageTypes.RoomStatusResult,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     public async ValueTask StopAsync(CancellationToken cancellationToken = default)
     {
         _initializedClient = null;

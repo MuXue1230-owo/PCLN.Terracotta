@@ -172,6 +172,13 @@ pub struct BackendRoom {
     pub members: Vec<RoomMember>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BackendRefresh {
+    pub network: Option<NetworkStatus>,
+    pub members: Option<Vec<RoomMember>>,
+    pub local_address: Option<String>,
+}
+
 #[async_trait]
 pub trait RoomBackend: Send + Sync {
     async fn set_identity(&self, identity: Zeroizing<[u8; 32]>);
@@ -185,6 +192,11 @@ pub trait RoomBackend: Send + Sync {
     async fn diagnose(&self) -> Result<NetworkStatus, RoomError>;
 
     async fn leave(&self) -> Result<(), RoomError>;
+
+    /// Optional live refresh used by `room.status` to update members and quality.
+    async fn refresh(&self) -> Result<BackendRefresh, RoomError> {
+        Ok(BackendRefresh::default())
+    }
 }
 
 pub struct RoomService {
@@ -211,6 +223,23 @@ impl RoomService {
     }
 
     pub async fn status(&self) -> RoomSnapshot {
+        if let Ok(refresh) = self.backend.refresh().await {
+            let mut state = self.state.lock().await;
+            if matches!(
+                state.state,
+                RoomState::Connected | RoomState::Reconnecting | RoomState::Diagnosing
+            ) {
+                if let Some(network) = refresh.network {
+                    state.network = Some(network);
+                }
+                if let Some(members) = refresh.members {
+                    state.members = members;
+                }
+                if let Some(local_address) = refresh.local_address {
+                    state.local_address = Some(local_address);
+                }
+            }
+        }
         self.state.lock().await.clone()
     }
 
@@ -354,19 +383,35 @@ impl RoomService {
             previous
         };
 
-        match self.backend.diagnose().await {
-            Ok(network) => {
+        // Prefer a full refresh so diagnose also updates members when available.
+        let refresh = self.backend.refresh().await.unwrap_or_default();
+        match refresh.network {
+            Some(network) => {
                 let mut state = self.state.lock().await;
                 state.state = previous;
                 state.network = Some(network.clone());
+                if let Some(members) = refresh.members {
+                    state.members = members;
+                }
+                if let Some(local_address) = refresh.local_address {
+                    state.local_address = Some(local_address);
+                }
                 Ok(network)
             }
-            Err(error) => {
-                let current = self.state.lock().await.clone();
-                *self.state.lock().await =
-                    RoomSnapshot::faulted(current.role, current.game_session_id, &error);
-                Err(error)
-            }
+            None => match self.backend.diagnose().await {
+                Ok(network) => {
+                    let mut state = self.state.lock().await;
+                    state.state = previous;
+                    state.network = Some(network.clone());
+                    Ok(network)
+                }
+                Err(error) => {
+                    let current = self.state.lock().await.clone();
+                    *self.state.lock().await =
+                        RoomSnapshot::faulted(current.role, current.game_session_id, &error);
+                    Err(error)
+                }
+            },
         }
     }
 
@@ -481,6 +526,10 @@ mod tests {
     #[async_trait]
     impl RoomBackend for TestBackend {
         async fn set_identity(&self, _identity: zeroize::Zeroizing<[u8; 32]>) {}
+
+        async fn refresh(&self) -> Result<super::BackendRefresh, RoomError> {
+            Ok(super::BackendRefresh::default())
+        }
 
         async fn create(&self, _request: &CreateRoomRequest) -> Result<BackendRoom, RoomError> {
             Ok(room("AB12-CD34-EF56", None))
