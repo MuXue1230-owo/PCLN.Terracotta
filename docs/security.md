@@ -43,8 +43,10 @@
 
 ## EasyTier 与房间凭据
 
-- EasyTier 以 Helper 子进程运行，使用 `--no-tun`，不申请管理员、不创建永久虚拟网卡；
+- EasyTier 以 Helper 子进程运行；默认 `--no-tun`，不申请管理员、不创建永久虚拟网卡；
+- `TERRACOTTA_EASYTIER_ALLOW_TUN=1` 可选择启用 TUN（可能触发系统权限提示），仅在 userspace 路径不足时使用；
 - `network-secret` 经环境变量注入子进程，不写入 Helper 参数列表或诊断日志；
 - 房间网络密钥由房间码与协议根派生，离房后清零；
+- Scaffolding 业务口仍只绑定 loopback；mesh ingress 在派生的高位端口上桥接，供虚拟网/同机访问；
 - 本机 discovery 公告仅含 loopback 端点，Unix 下目录/文件权限限制为当前用户；
 - 缺失 sidecar 时 fail closed，返回 `network.easytier-missing`。

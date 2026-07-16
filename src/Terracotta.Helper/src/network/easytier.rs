@@ -18,6 +18,8 @@ pub struct EasyTierLaunchConfig {
     pub prefer_direct: bool,
     pub allow_relay: bool,
     pub host_ipv4: Option<&'static str>,
+    /// EasyTier `--port-forward` entries (`tcp://local/remote`).
+    pub port_forwards: Vec<String>,
 }
 
 pub struct EasyTierNode {
@@ -77,28 +79,32 @@ pub async fn start_easytier(
         .stderr(Stdio::null())
         .env("ET_NETWORK_NAME", &credentials.network_name)
         .env("ET_NETWORK_SECRET", credentials.network_secret.as_str())
-        .arg("--no-tun")
         .arg("--use-smoltcp")
         .arg("--rpc-portal")
         .arg("127.0.0.1:0")
         .arg("--rpc-portal-whitelist")
         .arg("127.0.0.1/32,::1/128");
 
+    // Default: no permanent TUN / no admin. Opt-in TUN for stronger cross-machine reachability.
+    if !allow_tun() {
+        command.arg("--no-tun");
+    }
+
     if let Some(ipv4) = config.host_ipv4 {
         command.arg("--ipv4").arg(ipv4);
     }
 
     if config.prefer_direct {
-        // Prefer lower latency paths when available; EasyTier still falls back.
         command.arg("--latency-first");
     }
-    // `allow_relay` is retained for future private-mode policy. Shared public
-    // nodes remain required in alpha.2 for NAT coordination even when the UI
-    // prefers direct paths.
     let _ = config.allow_relay;
 
     for peer in shared_peers() {
         command.arg("-p").arg(peer);
+    }
+
+    for forward in &config.port_forwards {
+        command.arg("--port-forward").arg(forward);
     }
 
     let mut child = command.spawn().map_err(|error| {
@@ -110,7 +116,7 @@ pub async fn start_easytier(
     })?;
 
     // Give the process a brief moment to fail fast on bad arguments.
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(250)).await;
     if let Ok(Some(status)) = child.try_wait() {
         return Err(RoomError::new(
             "network.easytier-start-failed",
@@ -127,6 +133,13 @@ pub fn easytier_missing() -> RoomError {
         "network.easytier-missing",
         "The EasyTier runtime was not found next to terracotta-helper. Place easytier-core in the same native directory or set TERRACOTTA_EASYTIER_PATH.",
         false,
+    )
+}
+
+pub fn allow_tun() -> bool {
+    matches!(
+        env::var("TERRACOTTA_EASYTIER_ALLOW_TUN").as_deref(),
+        Ok("1" | "true" | "TRUE" | "yes" | "YES")
     )
 }
 
@@ -158,7 +171,7 @@ fn shared_peers() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{easytier_file_name, easytier_missing, resolve_easytier_binary};
+    use super::{allow_tun, easytier_file_name, easytier_missing, resolve_easytier_binary};
 
     #[test]
     fn missing_error_uses_stable_code() {
@@ -177,12 +190,14 @@ mod tests {
 
     #[test]
     fn resolve_returns_none_without_sidecar() {
-        // In the default helper test environment the sidecar is not present.
-        // An explicit override would only appear when developers opt in.
         if std::env::var_os("TERRACOTTA_EASYTIER_PATH").is_none() {
-            // May still find a file if developers dropped one next to the test exe;
-            // only assert the function is callable and returns an Option.
             let _ = resolve_easytier_binary();
         }
+    }
+
+    #[test]
+    fn tun_defaults_off() {
+        // Do not assert absolute false if the developer set the env globally.
+        let _ = allow_tun();
     }
 }

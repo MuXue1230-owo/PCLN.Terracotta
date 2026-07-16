@@ -39,7 +39,7 @@ CI 把文件下载到 `native/<rid>/` 后以 `TerracottaRequireNativeHelpers=tru
 5. 安装测试确认 Unix Helper 可执行；
 6. Windows DACL/PID 校验、package-asset API 与跨插件 Contracts 共享问题关闭；
 7. 将六 RID 的 `easytier-core` 与 Helper 一并放入 `native/<rid>/` 后打包；
-8. 完成跨机端口映射、崩溃/重连和跨启动器测试矩阵。
+8. 完成崩溃/重连和跨启动器测试矩阵。
 
 开发机可选放置 EasyTier sidecar：
 
@@ -48,3 +48,11 @@ native/<rid>/easytier-core[.exe]
 ```
 
 或设置 `TERRACOTTA_EASYTIER_PATH` 指向可执行文件。无 sidecar 时托管测试仍可通过；Helper 生产 create/join 会返回 `network.easytier-missing`。
+
+跨机联调：
+
+```powershell
+$env:TERRACOTTA_EASYTIER_PATH = "C:\path\to\easytier-core.exe"
+# 若 userspace 路由不足：
+$env:TERRACOTTA_EASYTIER_ALLOW_TUN = "1"
+```

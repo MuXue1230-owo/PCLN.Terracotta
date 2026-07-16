@@ -13,5 +13,6 @@ public static class ErrorCodeCatalog
     public const string EasyTierMissing = "TC-NET-002";
     public const string EasyTierStartFailed = "TC-NET-003";
     public const string PeerUnreachable = "TC-NET-004";
+    public const string MeshIngressFailed = "TC-NET-005";
     public const string SecureStorageUnavailable = "TC-SEC-001";
 }

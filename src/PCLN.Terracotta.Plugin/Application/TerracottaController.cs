@@ -386,6 +386,7 @@ public sealed class TerracottaController : ITerracottaRoomService, IAsyncDisposa
         "network.easytier-missing" => ErrorCodeCatalog.EasyTierMissing,
         "network.easytier-start-failed" or "network.easytier-stop-failed" => ErrorCodeCatalog.EasyTierStartFailed,
         "network.peer-unreachable" => ErrorCodeCatalog.PeerUnreachable,
+        "network.mesh-ingress-failed" => ErrorCodeCatalog.MeshIngressFailed,
         "room.invalid-code" => ErrorCodeCatalog.InvalidRoomCode,
         "identity.not-initialized" or "identity.invalid-key" => ErrorCodeCatalog.SecureStorageUnavailable,
         null or "" => ErrorCodeCatalog.HelperDisconnected,

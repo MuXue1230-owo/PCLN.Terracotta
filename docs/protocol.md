@@ -33,7 +33,7 @@
   "payload": {
     "authToken": "<64 lowercase hex>",
     "client": "pcln",
-    "clientVersion": "0.1.0-alpha.2"
+    "clientVersion": "0.1.0-alpha.3"
   }
 }
 ```
@@ -72,8 +72,8 @@
 | `room.status` | `room.status.result` | 已实现，返回当前房间快照 |
 | `room.leave` | `room.left` | 已实现并清理后端 |
 | `shutdown` | `shutdown.accepted` 后 EOF | 已实现 |
-| `room.create` | `room.created` / `error` | 已接 `EasyTierRoomBackend`；缺 sidecar 时 `network.easytier-missing` |
-| `room.join` | `room.joined` / `error` | 已接后端 + 本机 discovery；跨机映射见 `docs/network.md` |
+| `room.create` | `room.created` / `error` | mesh ingress + EasyTier host；缺 sidecar 时 `network.easytier-missing` |
+| `room.join` | `room.joined` / `error` | 同机 discovery 优先，否则 EasyTier `--port-forward` 跨机路径 |
 | `room.set-lan-address` | `room.state-changed` | 已实现，仅房主 Connected 状态可用 |
 | `network.diagnose` | `diagnostic.updated` | 已实现，后端返回网络快照 |
 

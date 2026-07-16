@@ -25,7 +25,14 @@ pub struct PortForward {
 
 impl PortForward {
     pub async fn start(target: SocketAddr) -> io::Result<Self> {
-        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
+        Self::start_on(SocketAddr::from(([127, 0, 0, 1], 0)), target).await
+    }
+
+    /// Bind an explicit local address and forward accepted connections to `target`.
+    /// Host mesh ingress uses `0.0.0.0:mesh_port` so EasyTier peers can reach services
+    /// when userspace/TUN routing delivers traffic to the process host.
+    pub async fn start_on(bind: SocketAddr, target: SocketAddr) -> io::Result<Self> {
+        let listener = TcpListener::bind(bind).await?;
         let local_addr = listener.local_addr()?;
         let (shutdown, shutdown_rx) = watch::channel(false);
         let active_connections = Arc::new(AtomicUsize::new(0));

@@ -1,6 +1,8 @@
-# 网络后端（alpha.2）
+# 网络后端
 
-Helper 通过可替换的 `RoomBackend` 接入生产网络。默认实现为 `EasyTierRoomBackend`：EasyTier 子进程 + Scaffolding + 本机 TCP 转发。
+Helper 通过可替换的 `RoomBackend` 接入生产网络。默认实现为 `EasyTierRoomBackend`：EasyTier 子进程 + Scaffolding + 本机/ mesh TCP 转发。
+
+当前版本：`0.1.0-alpha.3`。
 
 ## 组件边界
 
@@ -10,10 +12,12 @@ room.create / room.join
         ▼
  EasyTierRoomBackend
   ├─ credentials     房间码 ↔ network-name / network-secret
-  ├─ easytier-core   同目录 sidecar 子进程（--no-tun）
-  ├─ Scaffolding     仅 loopback
-  ├─ PortForward     成员侧 127.0.0.1 本地转发
-  └─ local discovery 同机房主端点公告（临时目录）
+  ├─ mesh            确定性 host 虚拟端点与成员本地转发端口
+  ├─ easytier-core   同目录 sidecar（默认 --no-tun）
+  ├─ Scaffolding     仅 loopback 业务口
+  ├─ mesh ingress    房主 0.0.0.0:mesh_port → loopback 服务
+  ├─ PortForward     同机成员 loopback 转发
+  └─ local discovery 同机房主端点公告（快速路径）
 ```
 
 ## EasyTier 运行时
@@ -23,60 +27,73 @@ room.create / room.join
 | 1 | 环境变量 `TERRACOTTA_EASYTIER_PATH` |
 | 2 | 与 `terracotta-helper` 同目录的 `easytier-core[.exe]` |
 
-缺失时返回稳定错误码 `network.easytier-missing`，不会伪造 `Connected`。
+缺失时返回 `network.easytier-missing`，不会伪造 `Connected`。
+
+| 环境变量 | 作用 |
+|---|---|
+| `TERRACOTTA_EASYTIER_PATH` | 显式 sidecar 路径 |
+| `TERRACOTTA_EASYTIER_PEERS` | 覆盖默认共享节点列表 |
+| `TERRACOTTA_EASYTIER_ALLOW_TUN` | `1/true` 时允许创建 TUN（可能需要管理员），增强跨机可达 |
+| `TERRACOTTA_DISCOVERY_DIR` | 覆盖同机 discovery 目录 |
 
 启动策略：
 
-- `--no-tun` + `--use-smoltcp`：不创建永久虚拟网卡、不要求管理员；
-- `ET_NETWORK_NAME` / `ET_NETWORK_SECRET` 经环境变量注入，不写磁盘明文配置；
+- 默认 `--no-tun` + `--use-smoltcp`：不创建永久虚拟网卡；
+- `ET_NETWORK_NAME` / `ET_NETWORK_SECRET` 经环境变量注入；
 - RPC portal 仅绑定 loopback；
-- 默认共享节点可被 `TERRACOTTA_EASYTIER_PEERS` 覆盖。
-
-正式 `.pnp` 期望布局：
-
-```text
-runtimes/<rid>/native/
-  terracotta-helper[.exe]
-  easytier-core[.exe]
-```
-
-开发机可只放 Helper；无 EasyTier 时创建/加入会进入 `Faulted`。
+- 成员侧使用 `--port-forward tcp://127.0.0.1:<local>/<host-virtual>:<mesh>`。
 
 ## 房间凭据
 
-- 房主用 CSPRNG 生成 12 位房间码（`XXXX-XXXX-XXXX`）；
-- `network_name` / `network_secret` 仅由房间码经协议根密钥 HMAC/SHA-256 派生，成员无需房主私钥；
-- 身份种子仅用于 Scaffolding `machine_id` 与本地玩家资料；
-- 离房或进程退出后清零内存中的 secret。
+- 房主 CSPRNG 生成 12 位房间码；
+- `network_name` / `network_secret` 仅由房间码派生；
+- 身份种子仅用于 Scaffolding `machine_id`。
 
-## 本地发现（alpha.2 限制）
+## 跨机 mesh（alpha.3）
 
-跨机 EasyTier 端口映射尚未完整。当前加入路径会：
+由房间码确定性派生：
 
-1. 启动 EasyTier；
-2. 在本机发现目录查找房主公告（默认 `%TEMP%/pcln-terracotta/rooms/`，可用 `TERRACOTTA_DISCOVERY_DIR` 覆盖）；
-3. 将 Scaffolding 与 Minecraft 端口转发到成员 loopback；
-4. 超时返回 `network.peer-unreachable`（可重试）。
+| 端点 | 范围 |
+|---|---|
+| Host 虚拟 IP | `10.144.144.1` |
+| Mesh Scaffolding 端口 | `41000–49999` |
+| Mesh Minecraft 端口 | `51000–59999` |
+| 成员本地 Scaffolding 转发 | `42000–50999` |
+| 成员本地 Minecraft 转发 | `52000–60999` |
 
-因此 **同机双实例** 可用于端到端联调；跨机互通依赖后续用户态端口映射增强。
+**房主 create**
+
+1. 启动 EasyTier（`--ipv4 10.144.144.1`）；
+2. Scaffolding 绑定 `127.0.0.1:0`；
+3. Mesh ingress：`0.0.0.0:<mesh_port>` → loopback 服务；
+4. 发布同机 discovery 公告。
+
+**成员 join**
+
+1. 短轮询同机 discovery（快速路径）；
+2. 否则启动 EasyTier，并配置到 host 虚拟端点的 `--port-forward`；
+3. 探测成员本地转发端口就绪后连接 Scaffolding；
+4. 返回 `127.0.0.1:<member_local_minecraft>`。
+
+若 userspace 路由不足以把虚拟 IP 流量送到房主 ingress，可在两侧设置 `TERRACOTTA_EASYTIER_ALLOW_TUN=1` 再试。
 
 ## 稳定错误码
 
 | 代码 | 含义 |
 |---|---|
 | `network.easytier-missing` | 未找到 EasyTier sidecar |
-| `network.easytier-start-failed` | 子进程启动失败或立即退出 |
+| `network.easytier-start-failed` | 子进程启动失败 |
 | `network.easytier-stop-failed` | 停止子进程失败 |
-| `network.scaffolding-failed` | Scaffolding 绑定/上下文失败 |
-| `network.forward-failed` | 本地 TCP 转发失败 |
-| `network.peer-unreachable` | 未发现房主端点 |
-| `network.discovery-*` | 本机公告读写/校验失败 |
-
-插件侧映射：
+| `network.scaffolding-failed` | Scaffolding 绑定失败 |
+| `network.forward-failed` | 本机 TCP 转发失败 |
+| `network.mesh-ingress-failed` | 房主 mesh 入口绑定失败 |
+| `network.peer-unreachable` | 本地与 mesh 路径均未发现房主 |
+| `network.discovery-*` | 同机公告读写/校验失败 |
 
 | Helper | 插件 |
 |---|---|
 | `network.easytier-missing` | `TC-NET-002` |
 | `network.easytier-start-failed` | `TC-NET-003` |
 | `network.peer-unreachable` | `TC-NET-004` |
+| `network.mesh-ingress-failed` | `TC-NET-005` |
 | 其他网络失败 | `TC-NET-001` |
