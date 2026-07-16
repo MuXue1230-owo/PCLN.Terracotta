@@ -4,15 +4,15 @@
 
 ## 当前实现状态
 
-当前为 `0.1.0-alpha.5`：
+当前为 **`0.1.0-rc.1` 发布候选**：
 
-- 插件导出四件套 + 双工 IPC 推送事件（`peer.*` / `network.updated` / `room.state-changed`）；
-- 默认 EasyTier 后端：凭据、Scaffolding、同机 discovery、跨机 mesh；
-- 连接中轮询 + Helper 2s 后台质量探测；不健康自动 `Reconnecting`；
-- 可选 `easytier-core` 打包；CI 变量 `EASYTIER_VERSION`；
-- 缺 sidecar 时 `network.easytier-missing`。
+- 完整联机路径：EasyTier + Scaffolding + mesh + 同机 discovery；
+- 插件导出四件套、双工 IPC 推送事件、连接中轮询与重连；
+- Helper 崩溃自动恢复（窗口内单次）并尝试重建房间；
+- EasyTier CLI 诊断（可选）与 TCP 探测回退；
+- 发布前脚本：`scripts/pre-release-check.ps1`、`scripts/generate-sbom.ps1`。
 
-详见 [实现状态](docs/implementation-status.md)、[网络后端](docs/network.md)、[IPC 协议](docs/protocol.md)、[插件导出](docs/exports.md)、[CHANGELOG](CHANGELOG.md)。
+详见 [实现状态](docs/implementation-status.md)、[发布清单](docs/release-checklist.md)、[网络后端](docs/network.md)、[CHANGELOG](CHANGELOG.md)。
 
 ## 构建
 

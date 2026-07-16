@@ -33,7 +33,7 @@
   "payload": {
     "authToken": "<64 lowercase hex>",
     "client": "pcln",
-    "clientVersion": "0.1.0-alpha.5"
+    "clientVersion": "0.1.0-rc.1"
   }
 }
 ```

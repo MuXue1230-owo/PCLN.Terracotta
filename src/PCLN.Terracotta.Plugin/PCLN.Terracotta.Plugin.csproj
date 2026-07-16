@@ -35,6 +35,12 @@
     <PclNPluginNative Include="../../native/linux-arm64/easytier-core" RuntimeIdentifier="linux-arm64" Condition="Exists('../../native/linux-arm64/easytier-core')" />
     <PclNPluginNative Include="../../native/osx-x64/easytier-core" RuntimeIdentifier="osx-x64" Condition="Exists('../../native/osx-x64/easytier-core')" />
     <PclNPluginNative Include="../../native/osx-arm64/easytier-core" RuntimeIdentifier="osx-arm64" Condition="Exists('../../native/osx-arm64/easytier-core')" />
+    <PclNPluginNative Include="../../native/win-x64/easytier-cli.exe" RuntimeIdentifier="win-x64" Condition="Exists('../../native/win-x64/easytier-cli.exe')" />
+    <PclNPluginNative Include="../../native/win-arm64/easytier-cli.exe" RuntimeIdentifier="win-arm64" Condition="Exists('../../native/win-arm64/easytier-cli.exe')" />
+    <PclNPluginNative Include="../../native/linux-x64/easytier-cli" RuntimeIdentifier="linux-x64" Condition="Exists('../../native/linux-x64/easytier-cli')" />
+    <PclNPluginNative Include="../../native/linux-arm64/easytier-cli" RuntimeIdentifier="linux-arm64" Condition="Exists('../../native/linux-arm64/easytier-cli')" />
+    <PclNPluginNative Include="../../native/osx-x64/easytier-cli" RuntimeIdentifier="osx-x64" Condition="Exists('../../native/osx-x64/easytier-cli')" />
+    <PclNPluginNative Include="../../native/osx-arm64/easytier-cli" RuntimeIdentifier="osx-arm64" Condition="Exists('../../native/osx-arm64/easytier-cli')" />
   </ItemGroup>
   <Target Name="ValidateTerracottaNativeHelpers"
           BeforeTargets="BuildPclNPluginPackage"

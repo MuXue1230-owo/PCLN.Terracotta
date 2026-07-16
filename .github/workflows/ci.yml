@@ -106,6 +106,14 @@ jobs:
           cp "$found" "native/${rid}/$bin"
           chmod +x "native/${rid}/$bin" || true
           echo "Staged EasyTier sidecar $bin for $rid"
+          cli_name="easytier-cli"
+          if [[ "$rid" == win-* ]]; then cli_name="easytier-cli.exe"; fi
+          cli_found="$(find "$tmp/out" -type f -name "$cli_name" | head -n 1 || true)"
+          if [[ -n "$cli_found" ]]; then
+            cp "$cli_found" "native/${rid}/$cli_name"
+            chmod +x "native/${rid}/$cli_name" || true
+            echo "Staged EasyTier CLI $cli_name for $rid"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: helper-${{ matrix.rid }}

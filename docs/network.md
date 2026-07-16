@@ -2,7 +2,7 @@
 
 Helper 通过可替换的 `RoomBackend` 接入生产网络。默认实现为 `EasyTierRoomBackend`：EasyTier 子进程 + Scaffolding + 本机/ mesh TCP 转发。
 
-当前版本：`0.1.0-alpha.5`。
+当前版本：`0.1.0-rc.1`。
 
 ## 组件边界
 
@@ -35,6 +35,11 @@ room.create / room.join
 | `TERRACOTTA_EASYTIER_PEERS` | 覆盖默认共享节点列表 |
 | `TERRACOTTA_EASYTIER_ALLOW_TUN` | `1/true` 时允许创建 TUN（可能需要管理员），增强跨机可达 |
 | `TERRACOTTA_DISCOVERY_DIR` | 覆盖同机 discovery 目录 |
+
+诊断：
+
+1. 若同目录存在 `easytier-cli`，对确定性 RPC portal 执行 `peer` 解析 NAT/延迟/中继；
+2. 否则对 Minecraft/本地转发端口做 TCP RTT 探测。
 
 启动策略：
 

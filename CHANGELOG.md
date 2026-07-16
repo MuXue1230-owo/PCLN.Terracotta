@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-rc.1
+
+- Helper crash auto-recovery: one restart within 10s, then fault; re-create/re-join room when possible
+- EasyTier diagnostics via `easytier-cli peer` when present (NAT / latency / relay); TCP probe fallback
+- Deterministic EasyTier RPC portal per room code
+- Pre-release script, SBOM generation script, release checklist
+- State machine paths for reconnect recovery
+
 ## 0.1.0-alpha.5
 
 - Push IPC events: `peer.joined` / `peer.left` / `peer.updated` / `network.updated` / `room.state-changed`

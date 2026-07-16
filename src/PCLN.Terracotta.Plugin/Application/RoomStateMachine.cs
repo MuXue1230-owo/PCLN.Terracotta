@@ -32,12 +32,14 @@ public sealed class RoomStateMachine
             [TerracottaRoomState.Creating] =
             [
                 TerracottaRoomState.Connected,
+                TerracottaRoomState.Reconnecting,
                 TerracottaRoomState.Leaving,
                 TerracottaRoomState.Faulted
             ],
             [TerracottaRoomState.Joining] =
             [
                 TerracottaRoomState.Connected,
+                TerracottaRoomState.Reconnecting,
                 TerracottaRoomState.Leaving,
                 TerracottaRoomState.Faulted
             ],
@@ -51,6 +53,8 @@ public sealed class RoomStateMachine
             [TerracottaRoomState.Reconnecting] =
             [
                 TerracottaRoomState.Connected,
+                TerracottaRoomState.Creating,
+                TerracottaRoomState.Joining,
                 TerracottaRoomState.Diagnosing,
                 TerracottaRoomState.Leaving,
                 TerracottaRoomState.Faulted

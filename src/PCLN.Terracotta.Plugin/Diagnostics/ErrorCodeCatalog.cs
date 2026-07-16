@@ -8,6 +8,7 @@ public static class ErrorCodeCatalog
     public const string HelperIntegrityFailure = "TC-HELPER-002";
     public const string HelperProtocolMismatch = "TC-IPC-001";
     public const string HelperDisconnected = "TC-IPC-002";
+    public const string HelperCrashRecovered = "TC-HELPER-003";
     public const string InvalidRoomCode = "TC-ROOM-001";
     public const string NetworkUnavailable = "TC-NET-001";
     public const string EasyTierMissing = "TC-NET-002";

@@ -2,6 +2,15 @@
 
 ## 本地检查
 
+发布前一键门禁：
+
+```powershell
+pwsh scripts/pre-release-check.ps1
+pwsh scripts/generate-sbom.ps1
+```
+
+分项：
+
 ```powershell
 dotnet test PCLN.Terracotta.slnx -c Release --nologo
 dotnet build src/PCLN.Terracotta.Plugin/PCLN.Terracotta.Plugin.csproj -c Release --nologo

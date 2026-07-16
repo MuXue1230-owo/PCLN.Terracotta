@@ -37,6 +37,7 @@ public sealed class TerracottaController :
     private TerracottaSettings _settings = new();
     private bool _started;
     private CancellationTokenSource? _statusPollCts;
+    private RecoveryIntent? _recovery;
 
     public TerracottaController(
         IPluginContext context,
@@ -63,6 +64,7 @@ public sealed class TerracottaController :
         _helper = helper ?? throw new ArgumentNullException(nameof(helper));
         _helperProcess = helperProcess ?? throw new ArgumentNullException(nameof(helperProcess));
         _helper.PushEventReceived += OnHelperPushEvent;
+        _helperProcess.HelperProcessExited += OnHelperProcessExited;
     }
 
     public event EventHandler<TerracottaRoomSnapshot>? SnapshotChanged;
@@ -177,6 +179,13 @@ public sealed class TerracottaController :
                 cancellationToken).ConfigureAwait(false);
             _stateMachine.TransitionTo(TerracottaRoomState.Connected);
             Publish(connected with { State = TerracottaRoomState.Connected });
+            RememberRecovery(
+                TerracottaRoomRole.Host,
+                connected.RoomCode,
+                selection.Selected.SessionId,
+                LanAddressResolver.ToLoopbackAddress(lanPort.Value),
+                request.PreferDirectConnection,
+                request.AllowRelay);
             StartStatusPolling();
             await PersistSelectedSessionAsync(selection.Selected.SessionId, cancellationToken).ConfigureAwait(false);
             if (_settings.AutoCopyRoomCode)
@@ -227,6 +236,13 @@ public sealed class TerracottaController :
                 cancellationToken).ConfigureAwait(false);
             _stateMachine.TransitionTo(TerracottaRoomState.Connected);
             Publish(connected with { State = TerracottaRoomState.Connected });
+            RememberRecovery(
+                TerracottaRoomRole.Member,
+                connected.RoomCode ?? parsedRoomCode.ToString(),
+                connected.GameSessionId ?? request.GameSessionId,
+                connected.LocalAddress,
+                preferDirect: true,
+                allowRelay: true);
             StartStatusPolling();
             if (connected.GameSessionId is not null)
                 await PersistSelectedSessionAsync(connected.GameSessionId, cancellationToken).ConfigureAwait(false);
@@ -251,6 +267,7 @@ public sealed class TerracottaController :
         try
         {
             StopStatusPolling();
+            _recovery = null;
             _pendingCreate = null;
             if (_stateMachine.State == TerracottaRoomState.Idle)
                 return;
@@ -392,6 +409,7 @@ public sealed class TerracottaController :
     {
         StopStatusPolling();
         _helper.PushEventReceived -= OnHelperPushEvent;
+        _helperProcess.HelperProcessExited -= OnHelperProcessExited;
         try
         {
             await LeaveAsync(CancellationToken.None).ConfigureAwait(false);
@@ -402,6 +420,122 @@ public sealed class TerracottaController :
             _operationGate.Dispose();
         }
     }
+
+    private void OnHelperProcessExited(object? sender, HelperProcessExitEventArgs args)
+    {
+        if (_snapshot.State is TerracottaRoomState.Idle or TerracottaRoomState.Leaving)
+            return;
+
+        StopStatusPolling();
+        if (_stateMachine.State is TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting or TerracottaRoomState.Diagnosing)
+        {
+            try
+            {
+                if (_stateMachine.State != TerracottaRoomState.Reconnecting)
+                    _stateMachine.TransitionTo(TerracottaRoomState.Reconnecting);
+            }
+            catch (InvalidOperationException)
+            {
+                // keep current state
+            }
+        }
+
+        Publish(_snapshot with
+        {
+            State = TerracottaRoomState.Reconnecting,
+            ErrorCode = ErrorCodeCatalog.HelperDisconnected,
+            ErrorMessage = args.WillAutoRestart
+                ? "陶瓦核心异常退出，正在尝试自动恢复房间。"
+                : "陶瓦核心连续异常退出，请手动重启联机。"
+        });
+
+        if (args.WillAutoRestart && _recovery is not null)
+            QueueOperation("recover-helper-room", RecoverAfterHelperCrashAsync);
+        else
+            PublishFault(ErrorCodeCatalog.HelperDisconnected, "陶瓦核心不可用，房间已中断。");
+    }
+
+    private async Task RecoverAfterHelperCrashAsync(CancellationToken cancellationToken)
+    {
+        RecoveryIntent? intent = _recovery;
+        if (intent is null)
+            return;
+
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _helper.StopAsync(cancellationToken).ConfigureAwait(false);
+            if (intent.Role == TerracottaRoomRole.Host)
+            {
+                if (string.IsNullOrWhiteSpace(intent.GameSessionId) || string.IsNullOrWhiteSpace(intent.LanAddress))
+                    throw new InvalidOperationException("Host recovery requires a session and LAN address.");
+                TerracottaRoomSnapshot connected = await _helper.CreateAsync(
+                    intent.GameSessionId,
+                    intent.LanAddress,
+                    intent.PreferDirect,
+                    intent.AllowRelay,
+                    cancellationToken).ConfigureAwait(false);
+                if (_stateMachine.State != TerracottaRoomState.Connected)
+                    _stateMachine.TransitionTo(TerracottaRoomState.Connected);
+                Publish(connected with
+                {
+                    State = TerracottaRoomState.Connected,
+                    ErrorCode = null,
+                    ErrorMessage = null
+                });
+                StartStatusPolling();
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(intent.RoomCode))
+                    throw new InvalidOperationException("Member recovery requires a room code.");
+                TerracottaRoomSnapshot connected = await _helper.JoinAsync(
+                    intent.RoomCode,
+                    intent.GameSessionId,
+                    cancellationToken).ConfigureAwait(false);
+                if (_stateMachine.State != TerracottaRoomState.Connected)
+                    _stateMachine.TransitionTo(TerracottaRoomState.Connected);
+                Publish(connected with
+                {
+                    State = TerracottaRoomState.Connected,
+                    ErrorCode = null,
+                    ErrorMessage = null
+                });
+                StartStatusPolling();
+            }
+
+            if (_context.Services.TryGet(out IPluginNotificationService? notifications) && notifications is not null)
+                notifications.ShowInformation("陶瓦核心已恢复，房间重新建立。");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _recovery = null;
+            Fault(exception);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    private void RememberRecovery(
+        TerracottaRoomRole role,
+        string? roomCode,
+        string? gameSessionId,
+        string? lanAddress,
+        bool preferDirect,
+        bool allowRelay)
+    {
+        _recovery = new RecoveryIntent(role, roomCode, gameSessionId, lanAddress, preferDirect, allowRelay);
+    }
+
+    private sealed record RecoveryIntent(
+        TerracottaRoomRole Role,
+        string? RoomCode,
+        string? GameSessionId,
+        string? LanAddress,
+        bool PreferDirect,
+        bool AllowRelay);
 
     private void OnHelperPushEvent(object? sender, HelperPushEvent push)
     {

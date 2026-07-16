@@ -29,6 +29,30 @@ public sealed class FoundationTests
     }
 
     [TestMethod]
+    public void RoomStateMachineAllowsReconnectAndRecoveryPath()
+    {
+        RoomStateMachine machine = new();
+        machine.TransitionTo(TerracottaRoomState.Creating);
+        machine.TransitionTo(TerracottaRoomState.Connected);
+        machine.TransitionTo(TerracottaRoomState.Reconnecting);
+        machine.TransitionTo(TerracottaRoomState.Connected);
+        machine.TransitionTo(TerracottaRoomState.Reconnecting);
+        machine.TransitionTo(TerracottaRoomState.Leaving);
+        machine.TransitionTo(TerracottaRoomState.Idle);
+        Assert.AreEqual(TerracottaRoomState.Idle, machine.State);
+    }
+
+    [TestMethod]
+    public void RoomStateMachineResetToIdleFromConnected()
+    {
+        RoomStateMachine machine = new();
+        machine.TransitionTo(TerracottaRoomState.Joining);
+        machine.TransitionTo(TerracottaRoomState.Connected);
+        machine.ResetToIdle();
+        Assert.AreEqual(TerracottaRoomState.Idle, machine.State);
+    }
+
+    [TestMethod]
     public void ExportNamesMatchStablePluginContractIds()
     {
         // Compare through variables so analyzers do not fold const-to-const assertions.
@@ -103,7 +127,7 @@ public sealed class FoundationTests
         PluginProcessResult process = new(1, "token=abc123", "private-key:xyz");
 
         string json = DiagnosticCollector.CreateJson(
-            "0.1.0-alpha.5",
+            "0.1.0-rc.1",
             "0.1.0",
             snapshot,
             process,

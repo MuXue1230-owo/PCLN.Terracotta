@@ -24,8 +24,9 @@ use super::{
     },
     easytier::{
         EasyTierLaunchConfig, EasyTierNode, easytier_missing, resolve_easytier_binary,
-        start_easytier,
+        rpc_portal_for_room, start_easytier,
     },
+    easytier_cli::{network_from_peer_sample, query_peer_quality, resolve_easytier_cli},
     mesh::{HOST_VIRTUAL_IPV4, MeshEndpoints},
     port_forward::PortForward,
     quality::{members_from_profiles, network_from_probe, probe_tcp_rtt},
@@ -164,6 +165,7 @@ impl RoomBackend for EasyTierRoomBackend {
                 allow_relay: request.allow_relay,
                 host_ipv4: Some("10.144.144.1"),
                 port_forwards: Vec::new(),
+                rpc_portal: rpc_portal_for_room(&credentials.room_code),
             },
         )
         .await?;
@@ -312,6 +314,7 @@ impl RoomBackend for EasyTierRoomBackend {
                 allow_relay: true,
                 host_ipv4: None,
                 port_forwards,
+                rpc_portal: rpc_portal_for_room(&credentials.room_code),
             },
         )
         .await?;
@@ -473,10 +476,19 @@ impl RoomBackend for EasyTierRoomBackend {
         let guard = self.session.lock().await;
         match guard.as_ref() {
             Some(ActiveSession::Host(host)) => {
-                let rtt_ms = probe_tcp_rtt(host.minecraft).await;
-                let network = network_from_probe(rtt_ms, host.prefer_direct, host.allow_relay);
+                let network = sample_network(
+                    &host.easytier,
+                    host.minecraft,
+                    host.prefer_direct,
+                    host.allow_relay,
+                )
+                .await;
                 let profiles = host.scaffolding_context.player_profiles().await;
-                let members = members_from_profiles(profiles, rtt_ms, network.connection_mode);
+                let members = members_from_profiles(
+                    profiles,
+                    network.round_trip_time_milliseconds,
+                    network.connection_mode,
+                );
                 Ok(BackendRefresh {
                     network: Some(network),
                     members: Some(members),
@@ -484,9 +496,13 @@ impl RoomBackend for EasyTierRoomBackend {
                 })
             }
             Some(ActiveSession::Member(member)) => {
-                let rtt_ms = probe_tcp_rtt(member.local_minecraft).await;
-                let network = network_from_probe(rtt_ms, member.prefer_direct, member.allow_relay);
-                // Best-effort Scaffolding member list over the local forward.
+                let network = sample_network(
+                    &member.easytier,
+                    member.local_minecraft,
+                    member.prefer_direct,
+                    member.allow_relay,
+                )
+                .await;
                 let members = match ScaffoldingClient::connect(
                     member.local_scaffolding,
                     PlayerProfile {
@@ -541,6 +557,7 @@ impl EasyTierRoomBackend {
                 allow_relay: true,
                 host_ipv4: None,
                 port_forwards: Vec::new(),
+                rpc_portal: rpc_portal_for_room(&credentials.room_code),
             },
         )
         .await?;
@@ -633,6 +650,28 @@ async fn try_local_endpoint(
         tokio::time::sleep(LOCAL_DISCOVERY_INTERVAL).await;
     }
     Ok(None)
+}
+
+async fn sample_network(
+    node: &EasyTierNode,
+    probe_target: SocketAddr,
+    prefer_direct: bool,
+    allow_relay: bool,
+) -> NetworkStatus {
+    if let Some(cli) = resolve_easytier_cli(node.binary()) {
+        let portal = format!("tcp://{}", node.rpc_portal());
+        if let Some(sample) = query_peer_quality(&cli, &portal).await {
+            let mut network = network_from_peer_sample(&sample);
+            if network.round_trip_time_milliseconds.is_none() {
+                network.round_trip_time_milliseconds = probe_tcp_rtt(probe_target).await;
+                network.is_healthy = network.round_trip_time_milliseconds.is_some();
+            }
+            return network;
+        }
+    }
+
+    let rtt_ms = probe_tcp_rtt(probe_target).await;
+    network_from_probe(rtt_ms, prefer_direct, allow_relay)
 }
 
 async fn wait_for_tcp(address: SocketAddr) -> Result<(), RoomError> {

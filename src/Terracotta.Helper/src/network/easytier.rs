@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf, process::Stdio, time::Duration};
+use std::{env, net::SocketAddr, path::PathBuf, process::Stdio, time::Duration};
 
 use tokio::{process::Command, time::sleep};
 
@@ -20,15 +20,26 @@ pub struct EasyTierLaunchConfig {
     pub host_ipv4: Option<&'static str>,
     /// EasyTier `--port-forward` entries (`tcp://local/remote`).
     pub port_forwards: Vec<String>,
+    /// Loopback RPC portal for `easytier-cli` diagnostics.
+    pub rpc_portal: SocketAddr,
 }
 
 pub struct EasyTierNode {
     child: tokio::process::Child,
+    rpc_portal: SocketAddr,
+    binary: PathBuf,
 }
 
 impl EasyTierNode {
+    pub fn rpc_portal(&self) -> SocketAddr {
+        self.rpc_portal
+    }
+
+    pub fn binary(&self) -> &std::path::Path {
+        &self.binary
+    }
+
     pub async fn stop(mut self) -> Result<(), RoomError> {
-        // Ask the process to exit, then force-kill if it ignores the signal.
         let _ = self.child.start_kill();
         match tokio::time::timeout(Duration::from_secs(3), self.child.wait()).await {
             Ok(Ok(_)) => Ok(()),
@@ -63,6 +74,14 @@ pub fn resolve_easytier_binary() -> Option<PathBuf> {
     None
 }
 
+/// Deterministic loopback RPC portal from room material to keep cli queries stable.
+pub fn rpc_portal_for_room(room_code: &str) -> SocketAddr {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(room_code.as_bytes());
+    let port = 19_000 + u16::from_be_bytes([digest[0], digest[1]]) % 1_000;
+    SocketAddr::from(([127, 0, 0, 1], port))
+}
+
 pub async fn start_easytier(
     credentials: &RoomCredentials,
     config: EasyTierLaunchConfig,
@@ -81,11 +100,10 @@ pub async fn start_easytier(
         .env("ET_NETWORK_SECRET", credentials.network_secret.as_str())
         .arg("--use-smoltcp")
         .arg("--rpc-portal")
-        .arg("127.0.0.1:0")
+        .arg(config.rpc_portal.to_string())
         .arg("--rpc-portal-whitelist")
         .arg("127.0.0.1/32,::1/128");
 
-    // Default: no permanent TUN / no admin. Opt-in TUN for stronger cross-machine reachability.
     if !allow_tun() {
         command.arg("--no-tun");
     }
@@ -115,7 +133,6 @@ pub async fn start_easytier(
         )
     })?;
 
-    // Give the process a brief moment to fail fast on bad arguments.
     sleep(Duration::from_millis(250)).await;
     if let Ok(Some(status)) = child.try_wait() {
         return Err(RoomError::new(
@@ -125,7 +142,11 @@ pub async fn start_easytier(
         ));
     }
 
-    Ok(EasyTierNode { child })
+    Ok(EasyTierNode {
+        child,
+        rpc_portal: config.rpc_portal,
+        binary: config.binary,
+    })
 }
 
 pub fn easytier_missing() -> RoomError {
@@ -171,7 +192,10 @@ fn shared_peers() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{allow_tun, easytier_file_name, easytier_missing, resolve_easytier_binary};
+    use super::{
+        allow_tun, easytier_file_name, easytier_missing, resolve_easytier_binary,
+        rpc_portal_for_room,
+    };
 
     #[test]
     fn missing_error_uses_stable_code() {
@@ -197,7 +221,15 @@ mod tests {
 
     #[test]
     fn tun_defaults_off() {
-        // Do not assert absolute false if the developer set the env globally.
         let _ = allow_tun();
+    }
+
+    #[test]
+    fn rpc_portal_is_stable_and_loopback() {
+        let left = rpc_portal_for_room("AB12-CD34-EF56");
+        let right = rpc_portal_for_room("AB12-CD34-EF56");
+        assert_eq!(left, right);
+        assert!(left.ip().is_loopback());
+        assert!(left.port() >= 19_000);
     }
 }

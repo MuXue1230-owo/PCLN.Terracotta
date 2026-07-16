@@ -2,21 +2,22 @@
 
 ## 已完成
 
-- alpha.1–alpha.3：插件/Helper 边界、EasyTier 后端、mesh 映射、discovery；
-- alpha.4：四个 `pcl.exports`、状态轮询、质量探测、可选 EasyTier 打包；
-- **alpha.5：**
-  - 推送式 IPC：`peer.*` / `network.updated` / `room.state-changed`；
-  - Helper 事件总线 + 2s 后台 poll；
-  - 网络不健康时 `Connected` → `Reconnecting`，恢复后回到 `Connected`；
-  - 插件双工 IPC 客户端与 push 事件消费。
+- alpha.1–alpha.5：双进程边界、EasyTier 后端、mesh、导出、推送事件、质量探测；
+- **rc.1（发布候选）：**
+  - Helper 异常退出自动恢复（10 秒窗口内最多 1 次），并尝试重建房间；
+  - EasyTier CLI 诊断解析（`easytier-cli peer`）+ TCP 回退；
+  - 确定性 RPC portal；
+  - `scripts/pre-release-check.ps1`、`scripts/generate-sbom.ps1`、`docs/release-checklist.md`。
 
-## 正在推进
+## 发布后跟踪
 
-- EasyTier RPC 精确 NAT/中继节点；
-- 六 RID EasyTier 强制门禁与跨启动器 E2E。
+1. 六 RID EasyTier **强制**门禁默认开启（需稳定下载源与体积策略）；
+2. 与 PCL CE / HMCL / FCL 实机互通签字验收；
+3. 官方 OpenPGP 密钥与商店签名；
+4. CycloneDX SBOM 进入 CI 工件。
 
-## 后续里程碑
+## 非目标（rc.1 明确不做）
 
-1. Contracts 默认 ALC 共享的宿主侧互通测试；
-2. 崩溃自动重连 Helper 并恢复房间；
-3. SBOM、官方签名与商店审核。
+- 进程内强沙箱；
+- 默认永久 TUN；
+- Helper 崩溃时 Minecraft 玩家零感知无缝迁移。
