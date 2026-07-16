@@ -4,15 +4,15 @@
 
 ## 当前实现状态
 
-当前为 `0.1.0-alpha.4`：
+当前为 `0.1.0-alpha.5`：
 
-- 插件导出：`room-service` / `session-service` / `network-status` / `diagnostics`（需宿主 `pcl.exports`）；
-- 默认 `EasyTierRoomBackend`：凭据、Scaffolding、同机 discovery、跨机 mesh 端口映射；
-- 连接中自动刷新房间成员与 RTT；诊断输出粗粒度 NAT/质量启发式；
-- 可选打包 `easytier-core`；CI 可通过仓库变量 `EASYTIER_VERSION` 下载 sidecar；
-- 缺 sidecar 时 `network.easytier-missing`；跨机困难可设 `TERRACOTTA_EASYTIER_ALLOW_TUN=1`。
+- 插件导出四件套 + 双工 IPC 推送事件（`peer.*` / `network.updated` / `room.state-changed`）；
+- 默认 EasyTier 后端：凭据、Scaffolding、同机 discovery、跨机 mesh；
+- 连接中轮询 + Helper 2s 后台质量探测；不健康自动 `Reconnecting`；
+- 可选 `easytier-core` 打包；CI 变量 `EASYTIER_VERSION`；
+- 缺 sidecar 时 `network.easytier-missing`。
 
-详见 [实现状态](docs/implementation-status.md)、[网络后端](docs/network.md)、[插件导出](docs/exports.md)、[CHANGELOG](CHANGELOG.md)。
+详见 [实现状态](docs/implementation-status.md)、[网络后端](docs/network.md)、[IPC 协议](docs/protocol.md)、[插件导出](docs/exports.md)、[CHANGELOG](CHANGELOG.md)。
 
 ## 构建
 

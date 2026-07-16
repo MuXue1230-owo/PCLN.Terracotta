@@ -109,4 +109,27 @@ public sealed class RoomStateMachine
 
         changed?.Invoke(this, next);
     }
+
+    /// <summary>
+    /// Best-effort path to Idle used when Helper reports the room is already gone
+    /// (for example after a remote leave or process recycle).
+    /// </summary>
+    public void ResetToIdle()
+    {
+        EventHandler<TerracottaRoomState>? changed;
+        lock (_gate)
+        {
+            if (_state == TerracottaRoomState.Idle)
+                return;
+            if (AllowedTransitions[_state].Contains(TerracottaRoomState.Leaving))
+                _state = TerracottaRoomState.Leaving;
+            if (_state != TerracottaRoomState.Idle && AllowedTransitions[_state].Contains(TerracottaRoomState.Idle))
+                _state = TerracottaRoomState.Idle;
+            else
+                _state = TerracottaRoomState.Idle;
+            changed = StateChanged;
+        }
+
+        changed?.Invoke(this, TerracottaRoomState.Idle);
+    }
 }

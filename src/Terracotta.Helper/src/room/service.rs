@@ -1,9 +1,11 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
+
+use super::events::{PeerEvent, PeerLeftEvent, RoomEvent, RoomEventBus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -202,6 +204,8 @@ pub trait RoomBackend: Send + Sync {
 pub struct RoomService {
     state: Mutex<RoomSnapshot>,
     backend: Arc<dyn RoomBackend>,
+    events: RoomEventBus,
+    known_members: Mutex<HashMap<String, RoomMember>>,
 }
 
 impl Default for RoomService {
@@ -215,7 +219,13 @@ impl RoomService {
         Self {
             state: Mutex::new(RoomSnapshot::idle()),
             backend,
+            events: RoomEventBus::new(),
+            known_members: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<RoomEvent> {
+        self.events.subscribe()
     }
 
     pub async fn initialize_identity(&self, identity: Zeroizing<[u8; 32]>) {
@@ -223,24 +233,89 @@ impl RoomService {
     }
 
     pub async fn status(&self) -> RoomSnapshot {
-        if let Ok(refresh) = self.backend.refresh().await {
+        self.poll_and_emit().await;
+        self.state.lock().await.clone()
+    }
+
+    /// Refresh backend quality/members, apply reconnect transitions, and emit push events.
+    pub async fn poll_and_emit(&self) {
+        let Ok(refresh) = self.backend.refresh().await else {
+            return;
+        };
+
+        let mut emit_network = None;
+        let mut emit_state = None;
+        let mut members_for_diff = None;
+
+        {
             let mut state = self.state.lock().await;
-            if matches!(
+            if !matches!(
                 state.state,
                 RoomState::Connected | RoomState::Reconnecting | RoomState::Diagnosing
             ) {
-                if let Some(network) = refresh.network {
-                    state.network = Some(network);
+                return;
+            }
+
+            if let Some(network) = refresh.network {
+                let previous = state.network.clone();
+                state.network = Some(network.clone());
+                if previous.as_ref() != Some(&network) {
+                    emit_network = Some(network.clone());
                 }
-                if let Some(members) = refresh.members {
-                    state.members = members;
-                }
-                if let Some(local_address) = refresh.local_address {
-                    state.local_address = Some(local_address);
+
+                if matches!(state.state, RoomState::Connected | RoomState::Reconnecting) {
+                    if !network.is_healthy && state.state == RoomState::Connected {
+                        state.state = RoomState::Reconnecting;
+                        emit_state = Some(state.clone());
+                    } else if network.is_healthy && state.state == RoomState::Reconnecting {
+                        state.state = RoomState::Connected;
+                        emit_state = Some(state.clone());
+                    }
                 }
             }
+
+            if let Some(local_address) = refresh.local_address {
+                state.local_address = Some(local_address);
+            }
+
+            if let Some(members) = refresh.members {
+                state.members = members.clone();
+                members_for_diff = Some(members);
+            }
         }
-        self.state.lock().await.clone()
+
+        if let Some(members) = members_for_diff {
+            let mut known = self.known_members.lock().await;
+            let mut next = HashMap::with_capacity(members.len());
+            for member in &members {
+                next.insert(member.id.clone(), member.clone());
+                match known.get(&member.id) {
+                    None => self.events.publish(RoomEvent::PeerJoined(PeerEvent {
+                        member: member.clone(),
+                    })),
+                    Some(previous) if previous != member => {
+                        self.events.publish(RoomEvent::PeerUpdated(PeerEvent {
+                            member: member.clone(),
+                        }));
+                    }
+                    Some(_) => {}
+                }
+            }
+            for id in known.keys() {
+                if !next.contains_key(id) {
+                    self.events
+                        .publish(RoomEvent::PeerLeft(PeerLeftEvent { id: id.clone() }));
+                }
+            }
+            *known = next;
+        }
+
+        if let Some(network) = emit_network {
+            self.events.publish(RoomEvent::NetworkUpdated(network));
+        }
+        if let Some(snapshot) = emit_state {
+            self.events.publish(RoomEvent::StateChanged(snapshot));
+        }
     }
 
     pub async fn create(&self, mut request: CreateRoomRequest) -> Result<RoomSnapshot, RoomError> {
@@ -279,11 +354,14 @@ impl RoomService {
                     local_address: room.local_address,
                     game_session_id: Some(request.game_session_id),
                     network: Some(room.network),
-                    members: room.members,
+                    members: room.members.clone(),
                     error_code: None,
                     error_message: None,
                 };
+                self.replace_known_members(&room.members).await;
                 *self.state.lock().await = snapshot.clone();
+                self.events
+                    .publish(RoomEvent::StateChanged(snapshot.clone()));
                 Ok(snapshot)
             }
             Err(error) => {
@@ -335,11 +413,14 @@ impl RoomService {
                     local_address: room.local_address,
                     game_session_id: request.game_session_id,
                     network: Some(room.network),
-                    members: room.members,
+                    members: room.members.clone(),
                     error_code: None,
                     error_message: None,
                 };
+                self.replace_known_members(&room.members).await;
                 *self.state.lock().await = snapshot.clone();
+                self.events
+                    .publish(RoomEvent::StateChanged(snapshot.clone()));
                 Ok(snapshot)
             }
             Err(error) => {
@@ -347,6 +428,14 @@ impl RoomService {
                     RoomSnapshot::faulted(RoomRole::Member, request.game_session_id, &error);
                 Err(error)
             }
+        }
+    }
+
+    async fn replace_known_members(&self, members: &[RoomMember]) {
+        let mut known = self.known_members.lock().await;
+        known.clear();
+        for member in members {
+            known.insert(member.id.clone(), member.clone());
         }
     }
 
@@ -431,6 +520,8 @@ impl RoomService {
             Ok(()) => {
                 let idle = RoomSnapshot::idle();
                 *self.state.lock().await = idle.clone();
+                self.known_members.lock().await.clear();
+                self.events.publish(RoomEvent::StateChanged(idle.clone()));
                 Ok(idle)
             }
             Err(error) => {

@@ -62,6 +62,7 @@ public sealed class TerracottaController :
         _windows = windows;
         _helper = helper ?? throw new ArgumentNullException(nameof(helper));
         _helperProcess = helperProcess ?? throw new ArgumentNullException(nameof(helperProcess));
+        _helper.PushEventReceived += OnHelperPushEvent;
     }
 
     public event EventHandler<TerracottaRoomSnapshot>? SnapshotChanged;
@@ -390,6 +391,7 @@ public sealed class TerracottaController :
     public async ValueTask DisposeAsync()
     {
         StopStatusPolling();
+        _helper.PushEventReceived -= OnHelperPushEvent;
         try
         {
             await LeaveAsync(CancellationToken.None).ConfigureAwait(false);
@@ -398,6 +400,90 @@ public sealed class TerracottaController :
         {
             await _helperProcess.DisposeAsync().ConfigureAwait(false);
             _operationGate.Dispose();
+        }
+    }
+
+    private void OnHelperPushEvent(object? sender, HelperPushEvent push)
+    {
+        try
+        {
+            switch (push.Type)
+            {
+                case HelperMessageTypes.RoomStateChanged:
+                {
+                    TerracottaRoomSnapshot snapshot = push.Envelope.ReadPayload<TerracottaRoomSnapshot>();
+                    ApplyHelperSnapshot(snapshot);
+                    break;
+                }
+                case HelperMessageTypes.NetworkUpdated:
+                {
+                    TerracottaNetworkStatus network = push.Envelope.ReadPayload<TerracottaNetworkStatus>();
+                    if (_snapshot.State is TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting or TerracottaRoomState.Diagnosing)
+                    {
+                        TerracottaRoomState next = network.IsHealthy
+                            ? TerracottaRoomState.Connected
+                            : TerracottaRoomState.Reconnecting;
+                        if (_stateMachine.State != next &&
+                            _stateMachine.State is TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting)
+                        {
+                            _stateMachine.TransitionTo(next);
+                        }
+                        Publish(_snapshot with { State = _stateMachine.State, Network = network });
+                    }
+                    break;
+                }
+                case HelperMessageTypes.PeerJoined:
+                case HelperMessageTypes.PeerUpdated:
+                case HelperMessageTypes.PeerLeft:
+                    // Membership changes are reconciled on the next status poll / state-changed push.
+                    QueueOperation("status-from-peer-event", token => RefreshStatusAsync(token).AsTask());
+                    break;
+            }
+        }
+        catch (Exception exception)
+        {
+            _context.Logger.Warn($"Ignored malformed Helper push event {push.Type}: {exception.Message}");
+        }
+    }
+
+    private void ApplyHelperSnapshot(TerracottaRoomSnapshot snapshot)
+    {
+        if (snapshot.State == TerracottaRoomState.Idle)
+        {
+            StopStatusPolling();
+            _stateMachine.ResetToIdle();
+            Publish(TerracottaRoomSnapshot.Idle);
+            return;
+        }
+
+        if (snapshot.State == TerracottaRoomState.Faulted)
+        {
+            StopStatusPolling();
+            if (_stateMachine.State != TerracottaRoomState.Faulted)
+                _stateMachine.TransitionTo(TerracottaRoomState.Faulted);
+            Publish(snapshot);
+            return;
+        }
+
+        if (snapshot.State is TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting)
+        {
+            if (_stateMachine.State != snapshot.State &&
+                _stateMachine.CanTransitionTo(snapshot.State))
+            {
+                try
+                {
+                    _stateMachine.TransitionTo(snapshot.State);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Keep local lifecycle if transition is not currently legal.
+                }
+            }
+            Publish(snapshot with { State = _stateMachine.State is TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting or TerracottaRoomState.Diagnosing
+                ? (_stateMachine.State == TerracottaRoomState.Diagnosing ? TerracottaRoomState.Diagnosing : snapshot.State)
+                : snapshot.State });
+            if (_statusPollCts is null)
+                StartStatusPolling();
         }
     }
 

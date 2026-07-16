@@ -11,10 +11,13 @@ use crate::{
         Envelope, ErrorResponse, HelloAccepted, HelloRequest, PROTOCOL_VERSION,
         framing::{FrameError, read_frame, write_frame},
     },
-    room::{CreateRoomRequest, JoinRoomRequest, RoomError, RoomService, SetLanAddressRequest},
+    room::{
+        CreateRoomRequest, JoinRoomRequest, RoomError, RoomEvent, RoomService, SetLanAddressRequest,
+    },
 };
 
 const MAX_REQUEST_IDS: usize = 4096;
+const EVENT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 const CAPABILITIES: &[&str] = &[
     "identity.initialize",
     "room.create",
@@ -23,6 +26,7 @@ const CAPABILITIES: &[&str] = &[
     "room.status",
     "room.set-lan-address",
     "network.diagnose",
+    "events.push",
     "shutdown",
 ];
 
@@ -112,201 +116,267 @@ where
 
     let mut request_ids = HashSet::from([first.id]);
     let mut identity = None;
+    let mut events = room.subscribe();
+    let mut event_sequence: u64 = 0;
+    let mut poll = tokio::time::interval(EVENT_POLL_INTERVAL);
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     loop {
-        let request = match read_frame(stream).await {
-            Ok(value) => value,
-            Err(FrameError::EndOfStream) => return Ok(SessionOutcome::PeerDisconnected),
-            Err(error) => return Err(error),
-        };
-        if request.protocol != PROTOCOL_VERSION {
-            send_error(
-                stream,
-                request.id,
-                "ipc.protocol-mismatch",
-                "The IPC protocol version is not supported.",
-                false,
-            )
-            .await?;
-            continue;
-        }
-        if !valid_request_id(&request.id) {
-            send_error(
-                stream,
-                request.id,
-                "ipc.invalid-request-id",
-                "The request ID is invalid.",
-                false,
-            )
-            .await?;
-            continue;
-        }
-        if request_ids.len() >= MAX_REQUEST_IDS {
-            send_error(
-                stream,
-                request.id,
-                "ipc.request-limit",
-                "The IPC session request limit was reached.",
-                false,
-            )
-            .await?;
-            return Ok(SessionOutcome::PeerDisconnected);
-        }
-        if !request_ids.insert(request.id.clone()) {
-            send_error(
-                stream,
-                request.id,
-                "ipc.duplicate-request-id",
-                "The request ID was already used in this session.",
-                false,
-            )
-            .await?;
-            continue;
-        }
-
-        if matches!(request.message_type.as_str(), "room.create" | "room.join")
-            && identity.is_none()
-        {
-            send_error(
-                stream,
-                request.id,
-                "identity.not-initialized",
-                "Initialize the secure identity before entering a room.",
-                false,
-            )
-            .await?;
-            continue;
-        }
-
-        match request.message_type.as_str() {
-            "identity.initialize" => {
-                match serde_json::from_value::<IdentityInitializeRequest>(request.payload) {
-                    Ok(payload) => match decode_identity(payload) {
-                        Some(private_key) => {
-                            room.initialize_identity(private_key.clone()).await;
-                            identity = Some(private_key);
-                            write_response(
-                                stream,
-                                request.id,
-                                "identity.initialized",
-                                IdentityInitializeResponse { initialized: true },
-                            )
-                            .await?
-                        }
-                        None => {
-                            send_error(
-                                stream,
-                                request.id,
-                                "identity.invalid-key",
-                                "The identity private key must be a 32-byte hexadecimal value.",
-                                false,
-                            )
-                            .await?;
-                        }
-                    },
-                    Err(_) => {
-                        send_error(
-                            stream,
-                            request.id,
-                            "identity.invalid-request",
-                            "The identity.initialize payload is invalid.",
-                            false,
-                        )
-                        .await?;
-                    }
-                }
-            }
-            "room.status" => {
-                write_response(
+        tokio::select! {
+            request = read_frame(stream) => {
+                let request = match request {
+                    Ok(value) => value,
+                    Err(FrameError::EndOfStream) => return Ok(SessionOutcome::PeerDisconnected),
+                    Err(error) => return Err(error),
+                };
+                if let Some(outcome) = handle_request(
                     stream,
-                    request.id,
-                    "room.status.result",
-                    room.status().await,
+                    room,
+                    &mut request_ids,
+                    &mut identity,
+                    request,
                 )
-                .await?;
+                .await?
+                {
+                    return Ok(outcome);
+                }
             }
-            "room.leave" => match room.leave().await {
-                Ok(snapshot) => write_response(stream, request.id, "room.left", snapshot).await?,
-                Err(error) => send_room_error(stream, request.id, error).await?,
-            },
-            "room.create" => match serde_json::from_value::<CreateRoomRequest>(request.payload) {
-                Ok(payload) => match room.create(payload).await {
-                    Ok(snapshot) => {
-                        write_response(stream, request.id, "room.created", snapshot).await?
+            _ = poll.tick() => {
+                // Background quality/membership poll feeds the event bus.
+                room.poll_and_emit().await;
+            }
+            event = events.recv() => {
+                match event {
+                    Ok(event) => {
+                        event_sequence = event_sequence.wrapping_add(1);
+                        write_event(stream, event_sequence, event).await?;
                     }
-                    Err(error) => send_room_error(stream, request.id, error).await?,
-                },
-                Err(_) => {
-                    send_error(
-                        stream,
-                        request.id,
-                        "room.invalid-request",
-                        "The room.create payload is invalid.",
-                        false,
-                    )
-                    .await?;
-                }
-            },
-            "room.join" => match serde_json::from_value::<JoinRoomRequest>(request.payload) {
-                Ok(payload) => match room.join(payload).await {
-                    Ok(snapshot) => {
-                        write_response(stream, request.id, "room.joined", snapshot).await?
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        // Drop lagged events; next poll will resync via room.status.
                     }
-                    Err(error) => send_room_error(stream, request.id, error).await?,
-                },
-                Err(_) => {
-                    send_error(
-                        stream,
-                        request.id,
-                        "room.invalid-request",
-                        "The room.join payload is invalid.",
-                        false,
-                    )
-                    .await?;
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        return Ok(SessionOutcome::PeerDisconnected);
+                    }
                 }
-            },
-            "room.set-lan-address" => {
-                match serde_json::from_value::<SetLanAddressRequest>(request.payload) {
-                    Ok(payload) => match room.set_lan_address(payload).await {
-                        Ok(snapshot) => {
-                            write_response(stream, request.id, "room.state-changed", snapshot)
-                                .await?
-                        }
-                        Err(error) => send_room_error(stream, request.id, error).await?,
-                    },
-                    Err(_) => {
+            }
+        }
+    }
+}
+
+async fn handle_request<S>(
+    stream: &mut S,
+    room: &RoomService,
+    request_ids: &mut HashSet<String>,
+    identity: &mut Option<Zeroizing<[u8; 32]>>,
+    request: Envelope,
+) -> Result<Option<SessionOutcome>, FrameError>
+where
+    S: AsyncWrite + Unpin,
+{
+    if request.protocol != PROTOCOL_VERSION {
+        send_error(
+            stream,
+            request.id,
+            "ipc.protocol-mismatch",
+            "The IPC protocol version is not supported.",
+            false,
+        )
+        .await?;
+        return Ok(None);
+    }
+    if !valid_request_id(&request.id) {
+        send_error(
+            stream,
+            request.id,
+            "ipc.invalid-request-id",
+            "The request ID is invalid.",
+            false,
+        )
+        .await?;
+        return Ok(None);
+    }
+    if request_ids.len() >= MAX_REQUEST_IDS {
+        send_error(
+            stream,
+            request.id,
+            "ipc.request-limit",
+            "The IPC session request limit was reached.",
+            false,
+        )
+        .await?;
+        return Ok(Some(SessionOutcome::PeerDisconnected));
+    }
+    if !request_ids.insert(request.id.clone()) {
+        send_error(
+            stream,
+            request.id,
+            "ipc.duplicate-request-id",
+            "The request ID was already used in this session.",
+            false,
+        )
+        .await?;
+        return Ok(None);
+    }
+
+    if matches!(request.message_type.as_str(), "room.create" | "room.join") && identity.is_none() {
+        send_error(
+            stream,
+            request.id,
+            "identity.not-initialized",
+            "Initialize the secure identity before entering a room.",
+            false,
+        )
+        .await?;
+        return Ok(None);
+    }
+
+    match request.message_type.as_str() {
+        "identity.initialize" => {
+            match serde_json::from_value::<IdentityInitializeRequest>(request.payload) {
+                Ok(payload) => match decode_identity(payload) {
+                    Some(private_key) => {
+                        room.initialize_identity(private_key.clone()).await;
+                        *identity = Some(private_key);
+                        write_response(
+                            stream,
+                            request.id,
+                            "identity.initialized",
+                            IdentityInitializeResponse { initialized: true },
+                        )
+                        .await?;
+                    }
+                    None => {
                         send_error(
                             stream,
                             request.id,
-                            "room.invalid-request",
-                            "The room.set-lan-address payload is invalid.",
+                            "identity.invalid-key",
+                            "The identity private key must be a 32-byte hexadecimal value.",
                             false,
                         )
                         .await?;
                     }
+                },
+                Err(_) => {
+                    send_error(
+                        stream,
+                        request.id,
+                        "identity.invalid-request",
+                        "The identity.initialize payload is invalid.",
+                        false,
+                    )
+                    .await?;
                 }
             }
-            "network.diagnose" => match room.diagnose().await {
-                Ok(status) => {
-                    write_response(stream, request.id, "diagnostic.updated", status).await?
+        }
+        "room.status" => {
+            write_response(
+                stream,
+                request.id,
+                "room.status.result",
+                room.status().await,
+            )
+            .await?;
+        }
+        "room.leave" => match room.leave().await {
+            Ok(snapshot) => write_response(stream, request.id, "room.left", snapshot).await?,
+            Err(error) => send_room_error(stream, request.id, error).await?,
+        },
+        "room.create" => match serde_json::from_value::<CreateRoomRequest>(request.payload) {
+            Ok(payload) => match room.create(payload).await {
+                Ok(snapshot) => {
+                    write_response(stream, request.id, "room.created", snapshot).await?
                 }
                 Err(error) => send_room_error(stream, request.id, error).await?,
             },
-            "shutdown" => {
-                write_response(stream, request.id, "shutdown.accepted", Empty {}).await?;
-                return Ok(SessionOutcome::ShutdownRequested);
-            }
-            _ => {
+            Err(_) => {
                 send_error(
                     stream,
                     request.id,
-                    "ipc.unknown-message-type",
-                    "Unsupported request type.",
+                    "room.invalid-request",
+                    "The room.create payload is invalid.",
                     false,
                 )
                 .await?;
             }
+        },
+        "room.join" => match serde_json::from_value::<JoinRoomRequest>(request.payload) {
+            Ok(payload) => match room.join(payload).await {
+                Ok(snapshot) => write_response(stream, request.id, "room.joined", snapshot).await?,
+                Err(error) => send_room_error(stream, request.id, error).await?,
+            },
+            Err(_) => {
+                send_error(
+                    stream,
+                    request.id,
+                    "room.invalid-request",
+                    "The room.join payload is invalid.",
+                    false,
+                )
+                .await?;
+            }
+        },
+        "room.set-lan-address" => {
+            match serde_json::from_value::<SetLanAddressRequest>(request.payload) {
+                Ok(payload) => match room.set_lan_address(payload).await {
+                    Ok(snapshot) => {
+                        write_response(stream, request.id, "room.state-changed", snapshot).await?
+                    }
+                    Err(error) => send_room_error(stream, request.id, error).await?,
+                },
+                Err(_) => {
+                    send_error(
+                        stream,
+                        request.id,
+                        "room.invalid-request",
+                        "The room.set-lan-address payload is invalid.",
+                        false,
+                    )
+                    .await?;
+                }
+            }
+        }
+        "network.diagnose" => match room.diagnose().await {
+            Ok(status) => write_response(stream, request.id, "diagnostic.updated", status).await?,
+            Err(error) => send_room_error(stream, request.id, error).await?,
+        },
+        "shutdown" => {
+            write_response(stream, request.id, "shutdown.accepted", Empty {}).await?;
+            return Ok(Some(SessionOutcome::ShutdownRequested));
+        }
+        _ => {
+            send_error(
+                stream,
+                request.id,
+                "ipc.unknown-message-type",
+                "Unsupported request type.",
+                false,
+            )
+            .await?;
         }
     }
+    Ok(None)
+}
+
+async fn write_event<S>(stream: &mut S, sequence: u64, event: RoomEvent) -> Result<(), FrameError>
+where
+    S: AsyncWrite + Unpin,
+{
+    let payload = event.payload().map_err(|error| {
+        FrameError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            error.to_string(),
+        ))
+    })?;
+    write_frame(
+        stream,
+        &Envelope {
+            protocol: PROTOCOL_VERSION,
+            id: format!("evt-{sequence}"),
+            message_type: event.message_type().into(),
+            payload,
+        },
+    )
+    .await
 }
 
 async fn write_response<S, T>(
@@ -478,7 +548,7 @@ mod tests {
                 json!({
                     "authToken": token,
                     "client": "pcln",
-                    "clientVersion": "0.1.0-alpha.4"
+                    "clientVersion": "0.1.0-alpha.5"
                 }),
             ),
         )
@@ -526,7 +596,7 @@ mod tests {
                 json!({
                     "authToken": supplied,
                     "client": "pcln",
-                    "clientVersion": "0.1.0-alpha.4"
+                    "clientVersion": "0.1.0-alpha.5"
                 }),
             ),
         )
@@ -559,7 +629,7 @@ mod tests {
                 json!({
                     "authToken": token,
                     "client": "pcln",
-                    "clientVersion": "0.1.0-alpha.4"
+                    "clientVersion": "0.1.0-alpha.5"
                 }),
             ),
         )
@@ -572,7 +642,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|value| value == "room.create")
+                .any(|value| value == "events.push")
         );
 
         write_frame(
@@ -604,8 +674,16 @@ mod tests {
         )
         .await
         .unwrap();
-        let created = read_frame(&mut client).await.unwrap();
-        assert_eq!(created.message_type, "room.created");
+        // create may be followed by a pushed room.state-changed event before/after response.
+        let mut created = None;
+        for _ in 0..4 {
+            let frame = read_frame(&mut client).await.unwrap();
+            if frame.message_type == "room.created" {
+                created = Some(frame);
+                break;
+            }
+        }
+        let created = created.expect("room.created response");
         assert_eq!(created.payload["state"], "connected");
         assert_eq!(created.payload["roomCode"], "AB12-CD34-EF56");
 
@@ -620,7 +698,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            read_frame(&mut client).await.unwrap().message_type,
+            wait_for_type(&mut client, "room.state-changed")
+                .await
+                .message_type,
             "room.state-changed"
         );
 
@@ -630,17 +710,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let diagnostic = read_frame(&mut client).await.unwrap();
-        assert_eq!(diagnostic.message_type, "diagnostic.updated");
+        let diagnostic = wait_for_type(&mut client, "diagnostic.updated").await;
         assert_eq!(diagnostic.payload["connectionMode"], "direct");
 
         write_frame(&mut client, &request("leave-1", "room.leave", json!({})))
             .await
             .unwrap();
-        assert_eq!(
-            read_frame(&mut client).await.unwrap().payload["state"],
-            "idle"
-        );
+        let left = wait_for_type(&mut client, "room.left").await;
+        assert_eq!(left.payload["state"], "idle");
 
         write_frame(
             &mut client,
@@ -652,21 +729,32 @@ mod tests {
         )
         .await
         .unwrap();
-        let joined = read_frame(&mut client).await.unwrap();
-        assert_eq!(joined.message_type, "room.joined");
+        let joined = wait_for_type(&mut client, "room.joined").await;
         assert_eq!(joined.payload["localAddress"], "127.0.0.1:25566");
 
         write_frame(&mut client, &request("shutdown-1", "shutdown", json!({})))
             .await
             .unwrap();
         assert_eq!(
-            read_frame(&mut client).await.unwrap().message_type,
+            wait_for_type(&mut client, "shutdown.accepted")
+                .await
+                .message_type,
             "shutdown.accepted"
         );
         assert_eq!(
             session.await.unwrap().unwrap(),
             SessionOutcome::ShutdownRequested
         );
+    }
+
+    async fn wait_for_type(client: &mut tokio::io::DuplexStream, message_type: &str) -> Envelope {
+        for _ in 0..8 {
+            let frame = read_frame(client).await.unwrap();
+            if frame.message_type == message_type {
+                return frame;
+            }
+        }
+        panic!("did not receive {message_type}");
     }
 
     fn request(id: &str, message_type: &str, payload: serde_json::Value) -> Envelope {

@@ -1,16 +1,33 @@
+using System.Collections.Concurrent;
 using System.IO.Pipes;
 using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Channels;
 using Cn.Pcln.Terracotta.Contracts;
+using PCL.N.Plugin;
 
 namespace Cn.Pcln.Terracotta.Infrastructure;
 
+/// <summary>
+/// Duplex IPC client: a background reader demultiplexes request responses and unsolicited push events.
+/// </summary>
 public sealed class HelperIpcClient : IAsyncDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
     private readonly Stream _stream;
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<IpcEnvelope>> _pending = new(StringComparer.Ordinal);
+    private readonly Channel<HelperPushEvent> _events = Channel.CreateBounded<HelperPushEvent>(
+        new BoundedChannelOptions(128)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = false,
+            SingleWriter = true
+        });
+    private readonly CancellationTokenSource _readerCts = new();
+    private IPluginTaskRegistration? _readerTask;
+    private bool _disposed;
 
     private HelperIpcClient(Stream stream)
     {
@@ -20,6 +37,12 @@ public sealed class HelperIpcClient : IAsyncDisposable
     public string? HelperVersion { get; private set; }
 
     public IReadOnlyList<string> Capabilities { get; private set; } = [];
+
+    public bool SupportsPushEvents =>
+        Capabilities.Any(static capability => string.Equals(capability, "events.push", StringComparison.Ordinal));
+
+    /// <summary>Consumes unsolicited Helper push events (peer/network/state).</summary>
+    public ChannelReader<HelperPushEvent> Events => _events.Reader;
 
     private static JsonSerializerOptions CreateJsonOptions()
     {
@@ -34,12 +57,16 @@ public sealed class HelperIpcClient : IAsyncDisposable
         string endpoint,
         string authenticationToken,
         string pluginVersion,
+        IPluginTaskService tasks,
+        string readerTaskName,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(tasks);
         Stream stream = await ConnectStreamAsync(endpoint, cancellationToken).ConfigureAwait(false);
         HelperIpcClient client = new(stream);
         try
         {
+            client.StartReader(tasks, readerTaskName);
             HelperHelloResponse response = await client.SendAsync<HelperHelloRequest, HelperHelloResponse>(
                 HelperMessageTypes.Hello,
                 new HelperHelloRequest(authenticationToken, "pcln", pluginVersion),
@@ -58,23 +85,48 @@ public sealed class HelperIpcClient : IAsyncDisposable
         }
     }
 
+    public void StartReader(IPluginTaskService tasks, string readerTaskName)
+    {
+        ArgumentNullException.ThrowIfNull(tasks);
+        if (_readerTask is not null)
+            return;
+        _readerTask = tasks.Run(readerTaskName, async token =>
+        {
+            using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(token, _readerCts.Token);
+            await ReadLoopAsync(linked.Token).ConfigureAwait(false);
+        });
+    }
+
     public async ValueTask<TResponse> SendAsync<TRequest, TResponse>(
         string messageType,
         TRequest request,
         string expectedResponseType,
         CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        IpcEnvelope outbound = IpcEnvelope.Create(messageType, request, options: JsonOptions);
+        TaskCompletionSource<IpcEnvelope> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pending.TryAdd(outbound.Id, completion))
+            throw new HelperProtocolException("Duplicate IPC request id generation failure.");
+
         try
         {
-            IpcEnvelope outbound = IpcEnvelope.Create(messageType, request, options: JsonOptions);
-            await IpcFraming.WriteAsync(_stream, outbound, JsonOptions, cancellationToken).ConfigureAwait(false);
-            IpcEnvelope inbound = await IpcFraming.ReadAsync(_stream, JsonOptions, cancellationToken).ConfigureAwait(false);
+            await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await IpcFraming.WriteAsync(_stream, outbound, JsonOptions, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _writeGate.Release();
+            }
+
+            using CancellationTokenRegistration registration = cancellationToken.Register(
+                static state => ((TaskCompletionSource<IpcEnvelope>)state!).TrySetCanceled(),
+                completion);
+            IpcEnvelope inbound = await completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
 
             if (inbound.Protocol != ProtocolVersion.Current)
                 throw new HelperProtocolException($"Unsupported Helper protocol version: {inbound.Protocol}.");
-            if (!string.Equals(inbound.Id, outbound.Id, StringComparison.Ordinal))
-                throw new HelperProtocolException("Helper response request ID did not match.");
             if (string.Equals(inbound.Type, HelperMessageTypes.Error, StringComparison.Ordinal))
             {
                 HelperError error = inbound.ReadPayload<HelperError>(JsonOptions);
@@ -87,22 +139,91 @@ public sealed class HelperIpcClient : IAsyncDisposable
         }
         finally
         {
-            _gate.Release();
+            _pending.TryRemove(outbound.Id, out _);
         }
     }
 
-    public ValueTask<IpcEnvelope> SendAsync(
+    public async ValueTask SendAsync(
         string messageType,
         object request,
         string expectedResponseType,
-        CancellationToken cancellationToken = default) =>
-        SendEnvelopeAsync(messageType, request, expectedResponseType, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        await SendAsync<object, JsonElement>(messageType, request, expectedResponseType, cancellationToken)
+            .ConfigureAwait(false);
+    }
 
     public async ValueTask DisposeAsync()
     {
+        if (_disposed)
+            return;
+        _disposed = true;
+        _readerCts.Cancel();
+        if (_readerTask is not null)
+        {
+            try
+            {
+                await _readerTask.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // ignore reader teardown
+            }
+        }
+
+        foreach (KeyValuePair<string, TaskCompletionSource<IpcEnvelope>> pair in _pending)
+            pair.Value.TrySetCanceled();
+        _pending.Clear();
+        _events.Writer.TryComplete();
         await _stream.DisposeAsync().ConfigureAwait(false);
-        _gate.Dispose();
+        _writeGate.Dispose();
+        _readerCts.Dispose();
     }
+
+    private async Task ReadLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                IpcEnvelope inbound = await IpcFraming.ReadAsync(_stream, JsonOptions, cancellationToken)
+                    .ConfigureAwait(false);
+                if (_pending.TryRemove(inbound.Id, out TaskCompletionSource<IpcEnvelope>? completion))
+                {
+                    completion.TrySetResult(inbound);
+                    continue;
+                }
+
+                if (IsPushEvent(inbound.Type))
+                {
+                    _events.Writer.TryWrite(new HelperPushEvent(inbound.Type, inbound));
+                    continue;
+                }
+
+                _events.Writer.TryWrite(new HelperPushEvent(inbound.Type, inbound));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // dispose
+        }
+        catch (Exception exception)
+        {
+            foreach (KeyValuePair<string, TaskCompletionSource<IpcEnvelope>> pair in _pending)
+                pair.Value.TrySetException(exception);
+            _events.Writer.TryComplete(exception);
+        }
+    }
+
+    private static bool IsPushEvent(string type) =>
+        type is HelperMessageTypes.PeerJoined
+            or HelperMessageTypes.PeerLeft
+            or HelperMessageTypes.PeerUpdated
+            or HelperMessageTypes.NetworkUpdated
+            or HelperMessageTypes.RoomStateChanged
+            or HelperMessageTypes.RoomFailed
+            or HelperMessageTypes.Log
+            or HelperMessageTypes.Fatal;
 
     private static async ValueTask<Stream> ConnectStreamAsync(
         string endpoint,
@@ -144,31 +265,6 @@ public sealed class HelperIpcClient : IAsyncDisposable
             throw;
         }
     }
-
-    private async ValueTask<IpcEnvelope> SendEnvelopeAsync(
-        string messageType,
-        object request,
-        string expectedResponseType,
-        CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            IpcEnvelope outbound = IpcEnvelope.Create(messageType, request, options: JsonOptions);
-            await IpcFraming.WriteAsync(_stream, outbound, JsonOptions, cancellationToken).ConfigureAwait(false);
-            IpcEnvelope inbound = await IpcFraming.ReadAsync(_stream, JsonOptions, cancellationToken).ConfigureAwait(false);
-            if (inbound.Protocol != ProtocolVersion.Current ||
-                !string.Equals(inbound.Id, outbound.Id, StringComparison.Ordinal) ||
-                !string.Equals(inbound.Type, expectedResponseType, StringComparison.Ordinal))
-            {
-                throw new HelperProtocolException("Helper response envelope did not match the request.");
-            }
-
-            return inbound;
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
 }
+
+public sealed record HelperPushEvent(string Type, IpcEnvelope Envelope);

@@ -1,14 +1,30 @@
 using Cn.Pcln.Terracotta.Contracts;
 using Cn.Pcln.Terracotta.Services;
+using PCL.N.Plugin;
 using System.Security.Cryptography;
 
 namespace Cn.Pcln.Terracotta.Infrastructure;
 
-public sealed class HelperRoomGateway(
-    HelperProcessManager processManager,
-    SecureIdentityStore identityStore)
+public sealed class HelperRoomGateway
 {
+    private readonly HelperProcessManager _processManager;
+    private readonly SecureIdentityStore _identityStore;
+    private readonly IPluginTaskService _tasks;
     private HelperIpcClient? _initializedClient;
+    private CancellationTokenSource? _eventPumpCts;
+    private IPluginTaskRegistration? _eventPumpTask;
+
+    public HelperRoomGateway(
+        HelperProcessManager processManager,
+        SecureIdentityStore identityStore,
+        IPluginTaskService tasks)
+    {
+        _processManager = processManager ?? throw new ArgumentNullException(nameof(processManager));
+        _identityStore = identityStore ?? throw new ArgumentNullException(nameof(identityStore));
+        _tasks = tasks ?? throw new ArgumentNullException(nameof(tasks));
+    }
+
+    public event EventHandler<HelperPushEvent>? PushEventReceived;
 
     public async ValueTask<TerracottaRoomSnapshot> CreateAsync(
         string gameSessionId,
@@ -46,7 +62,7 @@ public sealed class HelperRoomGateway(
             new { },
             HelperMessageTypes.RoomLeft,
             cancellationToken).ConfigureAwait(false);
-        await processManager.StopAsync(cancellationToken).ConfigureAwait(false);
+        await StopAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<TerracottaRoomSnapshot> SetLanAddressAsync(
@@ -85,17 +101,18 @@ public sealed class HelperRoomGateway(
 
     public async ValueTask StopAsync(CancellationToken cancellationToken = default)
     {
+        await StopEventPumpAsync().ConfigureAwait(false);
         _initializedClient = null;
-        await processManager.StopAsync(cancellationToken).ConfigureAwait(false);
+        await _processManager.StopAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<HelperIpcClient> EnsureInitializedAsync(CancellationToken cancellationToken)
     {
-        HelperIpcClient client = await processManager.EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
+        HelperIpcClient client = await _processManager.EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
         if (ReferenceEquals(_initializedClient, client))
             return client;
 
-        byte[] privateKey = await identityStore.GetOrCreateAsync(cancellationToken).ConfigureAwait(false);
+        byte[] privateKey = await _identityStore.GetOrCreateAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             HelperIdentityInitializeResponse response =
@@ -107,11 +124,54 @@ public sealed class HelperRoomGateway(
             if (!response.Initialized)
                 throw new SecureIdentityException("陶瓦核心未接受安全身份。");
             _initializedClient = client;
+            StartEventPump(client);
             return client;
         }
         finally
         {
             CryptographicOperations.ZeroMemory(privateKey);
+        }
+    }
+
+    private void StartEventPump(HelperIpcClient client)
+    {
+        _ = StopEventPumpAsync();
+        CancellationTokenSource cts = new();
+        _eventPumpCts = cts;
+        _eventPumpTask = _tasks.Run(PluginIds.Plugin + ".helper-event-pump", async token =>
+        {
+            using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(token, cts.Token);
+            try
+            {
+                await foreach (HelperPushEvent push in client.Events.ReadAllAsync(linked.Token).ConfigureAwait(false))
+                    PushEventReceived?.Invoke(this, push);
+            }
+            catch (OperationCanceledException)
+            {
+                // expected
+            }
+        });
+    }
+
+    private async Task StopEventPumpAsync()
+    {
+        CancellationTokenSource? cts = Interlocked.Exchange(ref _eventPumpCts, null);
+        IPluginTaskRegistration? pump = Interlocked.Exchange(ref _eventPumpTask, null);
+        if (cts is null && pump is null)
+            return;
+        try
+        {
+            cts?.Cancel();
+            if (pump is not null)
+                await pump.DisposeAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // ignore pump teardown faults
+        }
+        finally
+        {
+            cts?.Dispose();
         }
     }
 }

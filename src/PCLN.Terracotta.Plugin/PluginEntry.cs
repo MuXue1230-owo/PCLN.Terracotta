@@ -38,7 +38,7 @@ public sealed class PluginEntry : IPclNPlugin, IAsyncDisposable
             launchEvents,
             pages,
             windows,
-            new HelperRoomGateway(helperProcess, new SecureIdentityStore(secureStorage)),
+            new HelperRoomGateway(helperProcess, new SecureIdentityStore(secureStorage), tasks),
             helperProcess);
 
         context.Lifetime.Track(pages.Register(new AvaloniaPluginPageDescriptor(

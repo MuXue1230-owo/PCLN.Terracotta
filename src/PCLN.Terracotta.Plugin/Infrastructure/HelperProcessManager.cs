@@ -92,6 +92,8 @@ public sealed class HelperProcessManager : IAsyncDisposable
                         _endpoint.Address,
                         authenticationToken,
                         _context.Plugin.Version.ToString(),
+                        _tasks,
+                        PluginIds.Plugin + ".helper-ipc-reader",
                         startupTimeout.Token).ConfigureAwait(false);
                     _lastHelperVersion = _client.HelperVersion;
                     return _client;

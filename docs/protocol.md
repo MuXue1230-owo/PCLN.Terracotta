@@ -33,7 +33,7 @@
   "payload": {
     "authToken": "<64 lowercase hex>",
     "client": "pcln",
-    "clientVersion": "0.1.0-alpha.4"
+    "clientVersion": "0.1.0-alpha.5"
   }
 }
 ```
@@ -55,6 +55,7 @@
       "room.status",
       "room.set-lan-address",
       "network.diagnose",
+      "events.push",
       "shutdown"
     ]
   }
@@ -77,6 +78,20 @@
 | `room.set-lan-address` | `room.state-changed` | 已实现，仅房主 Connected 状态可用 |
 | `network.diagnose` | `diagnostic.updated` | 已实现，后端返回网络快照 |
 
+### 推送事件（alpha.5，`events.push`）
+
+Helper 可在任意时刻发送无关联请求的 Envelope（`id` 形如 `evt-N`）：
+
+| 类型 | payload | 含义 |
+|---|---|---|
+| `peer.joined` | `{ "member": RoomMember }` | 新成员 |
+| `peer.left` | `{ "id": "..." }` | 成员离开 |
+| `peer.updated` | `{ "member": RoomMember }` | 成员质量/显示名变化 |
+| `network.updated` | `NetworkStatus` | 网络质量/健康变化 |
+| `room.state-changed` | `RoomSnapshot` | 生命周期变化（含 Connected↔Reconnecting） |
+
+插件 IPC 客户端为双工：后台读循环按 `id` 匹配响应，其余推送进入事件通道。
+
 未知消息返回 `ipc.unknown-message-type`；重复请求 ID 返回 `ipc.duplicate-request-id`；单连接最多记录 4096 个请求 ID。
 
-房间服务会独立校验 Minecraft 地址必须为 loopback、端口非零、会话 ID 有界，并把房间码规范化为 `XXXX-XXXX-XXXX`。默认后端在同目录找不到 `easytier-core` 时进入 `Faulted` 并返回 `network.easytier-missing`；测试可通过注入 `RoomBackend` 验证完整成功路径。
+房间服务会独立校验 Minecraft 地址必须为 loopback、端口非零、会话 ID 有界，并把房间码规范化为 `XXXX-XXXX-XXXX`。默认后端在同目录找不到 `easytier-core` 时进入 `Faulted` 并返回 `network.easytier-missing`；测试可通过注入 `RoomBackend` 验证完整成功路径。网络不健康时状态进入 `reconnecting`，恢复后回到 `connected`。

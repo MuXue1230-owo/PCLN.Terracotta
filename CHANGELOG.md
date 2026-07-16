@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-alpha.5
+
+- Push IPC events: `peer.joined` / `peer.left` / `peer.updated` / `network.updated` / `room.state-changed`
+- Helper capability `events.push`; background membership/quality poll every 2s
+- Connected ↔ Reconnecting based on network health probes
+- Duplex plugin IPC client with demuxed responses and event channel
+- Plugin consumes push events to update snapshots without full manual refresh
+
 ## 0.1.0-alpha.4
 
 - Register four plugin exports via `pcl.exports`: `room-service`, `session-service`, `network-status`, `diagnostics`

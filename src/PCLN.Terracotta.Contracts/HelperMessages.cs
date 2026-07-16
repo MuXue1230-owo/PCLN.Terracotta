@@ -47,3 +47,7 @@ public sealed record HelperRoomSetLanAddressRequest(string LanAddress);
 public sealed record HelperError(string Code, string Message, bool Retryable = false);
 
 public sealed record HelperLogEvent(string Category, string Level, string Message, DateTimeOffset Timestamp);
+
+public sealed record HelperPeerEvent(TerracottaRoomMember Member);
+
+public sealed record HelperPeerLeftEvent(string Id);
