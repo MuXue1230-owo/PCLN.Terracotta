@@ -23,6 +23,10 @@
   "host": {
     "minimumVersion": "1.0.0"
   },
+  "data": {
+    "schemaVersion": 1,
+    "minimumReadableSchema": 1
+  },
   "services": {
     "required": {
       "pcl.logging": ">=0.1 <1.0",
