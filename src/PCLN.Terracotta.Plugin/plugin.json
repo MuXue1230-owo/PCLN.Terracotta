@@ -21,7 +21,7 @@
     "maximumExclusive": "1.0"
   },
   "host": {
-    "minimumVersion": "1.1.4"
+    "minimumVersion": "1.0.0"
   },
   "services": {
     "required": {
