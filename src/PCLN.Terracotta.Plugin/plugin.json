@@ -92,7 +92,7 @@
     ]
   },
   "signing": {
-    "fingerprint": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "fingerprint": "5701218D69B531E1A7ED35BB6E31F5974A273AEE"
   },
   "categories": ["multiplayer", "network"],
   "tags": ["terracotta", "p2p", "easytier", "scaffolding"]
