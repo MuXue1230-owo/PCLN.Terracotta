@@ -142,12 +142,16 @@ public sealed class FoundationTests
     }
 
     [TestMethod]
-    public async Task SecureIdentityStoreFailsClosedWithoutHostStorage()
+    public async Task SecureIdentityStoreUsesStableSessionIdentityWithoutHostStorage()
     {
         SecureIdentityStore store = new(null);
 
-        await Assert.ThrowsExactlyAsync<SecureIdentityException>(async () =>
-            await store.GetOrCreateAsync());
+        byte[] created = await store.GetOrCreateAsync();
+        byte[] reused = await store.GetOrCreateAsync();
+
+        Assert.IsTrue(store.UsesTemporaryIdentity);
+        Assert.HasCount(32, created);
+        CollectionAssert.AreEqual(created, reused);
     }
 
     [TestMethod]

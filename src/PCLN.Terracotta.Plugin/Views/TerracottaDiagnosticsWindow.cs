@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Cn.Pcln.Terracotta.Application;
 using Cn.Pcln.Terracotta.Contracts;
+using Cn.Pcln.Terracotta.Services;
 
 namespace Cn.Pcln.Terracotta.Views;
 
@@ -11,10 +12,11 @@ public sealed class TerracottaDiagnosticsWindow : Window
     private readonly TerracottaController _controller;
     private readonly TextBox _report;
 
-    public TerracottaDiagnosticsWindow(TerracottaController controller)
+    public TerracottaDiagnosticsWindow(TerracottaController controller, TerracottaLocalizer localizer)
     {
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
-        Title = "陶瓦联机诊断";
+        ArgumentNullException.ThrowIfNull(localizer);
+        Title = localizer.Get("terracotta.diagnostics.title", "陶瓦联机诊断");
         Width = 760;
         Height = 620;
         MinWidth = 560;
@@ -34,13 +36,13 @@ public sealed class TerracottaDiagnosticsWindow : Window
             _report,
             Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
 
-        Button diagnose = new() { Content = "运行网络诊断" };
+        Button diagnose = new() { Content = localizer.Get("terracotta.diagnostics.run", "运行网络诊断") };
         diagnose.Click += (_, _) => _controller.QueueDiagnose();
-        Button refresh = new() { Content = "刷新" };
+        Button refresh = new() { Content = localizer.Get("terracotta.diagnostics.refresh", "刷新") };
         refresh.Click += (_, _) => Render();
-        Button copy = new() { Content = "复制报告" };
+        Button copy = new() { Content = localizer.Get("terracotta.diagnostics.copy", "复制报告") };
         copy.Click += (_, _) => _controller.QueueCopyDiagnostics();
-        Button export = new() { Content = "保存报告" };
+        Button export = new() { Content = localizer.Get("terracotta.diagnostics.save", "保存报告") };
         export.Click += (_, _) => _controller.QueueExportDiagnostics();
 
         Grid layout = new()
@@ -51,7 +53,7 @@ public sealed class TerracottaDiagnosticsWindow : Window
         };
         TextBlock heading = new()
         {
-            Text = "诊断报告不会自动上传，Token、密钥和认证信息会在生成前脱敏。",
+            Text = localizer.Get("terracotta.diagnostics.notice", "诊断报告不会自动上传，Token、密钥和认证信息会在生成前脱敏。"),
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         };
         Grid.SetRow(heading, 0);

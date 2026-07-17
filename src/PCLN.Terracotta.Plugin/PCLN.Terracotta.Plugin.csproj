@@ -3,7 +3,7 @@
     <AssemblyName>PCLN.Terracotta.Plugin</AssemblyName>
     <RootNamespace>Cn.Pcln.Terracotta</RootNamespace>
     <Description>Official Terracotta multiplayer plugin for PCL N.</Description>
-    <PclNPluginSdkVersion>0.1.1</PclNPluginSdkVersion>
+    <PclNPluginSdkVersion>0.2.0</PclNPluginSdkVersion>
     <PclNPluginId>cn.pcln.terracotta</PclNPluginId>
     <PclNPluginSign>false</PclNPluginSign>
     <PclNPluginOutputDirectory>$(MSBuildThisFileDirectory)..\..\artifacts\</PclNPluginOutputDirectory>

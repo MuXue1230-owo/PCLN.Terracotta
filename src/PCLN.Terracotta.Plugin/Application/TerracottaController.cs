@@ -23,12 +23,14 @@ public sealed class TerracottaController :
     private readonly IPluginCommandService _commands;
     private readonly IPluginTaskService _tasks;
     private readonly GameSessionCoordinator _sessions;
-    private readonly IPluginGameOutputService _output;
+    private readonly IPluginGameOutputService? _output;
     private readonly IPluginLaunchEventService _launchEvents;
     private readonly IPluginNavigationService _navigation;
     private readonly IAvaloniaPluginWindowService? _windows;
     private readonly HelperRoomGateway _helper;
     private readonly HelperProcessManager _helperProcess;
+    private readonly TerracottaLocalizer _localizer;
+    private readonly IPluginBackgroundTaskService? _backgroundTasks;
     private readonly RoomStateMachine _stateMachine = new();
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private long _operationSequence;
@@ -45,24 +47,28 @@ public sealed class TerracottaController :
         IPluginCommandService commands,
         IPluginTaskService tasks,
         GameSessionCoordinator sessions,
-        IPluginGameOutputService output,
+        IPluginGameOutputService? output,
         IPluginLaunchEventService launchEvents,
         IPluginNavigationService navigation,
         IAvaloniaPluginWindowService? windows,
         HelperRoomGateway helper,
-        HelperProcessManager helperProcess)
+        HelperProcessManager helperProcess,
+        TerracottaLocalizer localizer,
+        IPluginBackgroundTaskService? backgroundTasks = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
         _commands = commands ?? throw new ArgumentNullException(nameof(commands));
         _tasks = tasks ?? throw new ArgumentNullException(nameof(tasks));
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
-        _output = output ?? throw new ArgumentNullException(nameof(output));
+        _output = output;
         _launchEvents = launchEvents ?? throw new ArgumentNullException(nameof(launchEvents));
         _navigation = navigation ?? throw new ArgumentNullException(nameof(navigation));
         _windows = windows;
         _helper = helper ?? throw new ArgumentNullException(nameof(helper));
         _helperProcess = helperProcess ?? throw new ArgumentNullException(nameof(helperProcess));
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
+        _backgroundTasks = backgroundTasks;
         _helper.PushEventReceived += OnHelperPushEvent;
         _helperProcess.HelperProcessExited += OnHelperProcessExited;
     }
@@ -80,41 +86,46 @@ public sealed class TerracottaController :
         if (_started)
             return;
         _started = true;
-        _context.Lifetime.Track(_output.Subscribe(OnGameOutput));
+        if (_output is not null)
+            _context.Lifetime.Track(_output.Subscribe(OnGameOutput));
         _context.Lifetime.Track(_launchEvents.Subscribe(OnLaunchEvent));
         QueueOperation("load-settings", LoadSettingsAsync);
     }
 
     public void RegisterCommands()
     {
-        TrackCommand(PluginIds.CreateRoomCommand, "创建陶瓦房间", token =>
-            CreateAsync(new TerracottaCreateRoomRequest(), token).AsTask());
-        TrackCommand(PluginIds.JoinRoomCommand, "加入陶瓦房间", token =>
+        TrackCommand(PluginIds.CreateRoomCommand, _localizer.Get("terracotta.createRoom", "创建房间"), token =>
+            RunConnectionTaskAsync(inner => CreateAsync(new TerracottaCreateRoomRequest(), inner).AsTask(), token));
+        TrackCommand(PluginIds.JoinRoomCommand, _localizer.Get("terracotta.joinRoom", "加入房间"), token =>
             _navigation.NavigateAsync(PluginIds.PageRoute, token).AsTask());
-        TrackCommand(PluginIds.LeaveRoomCommand, "退出陶瓦房间", token => LeaveAsync(token).AsTask());
-        TrackCommand(PluginIds.CopyRoomCodeCommand, "复制陶瓦房间码", CopyRoomCodeAsync);
-        TrackCommand(PluginIds.CopyConnectAddressCommand, "复制联机地址", CopyConnectAddressAsync);
-        TrackCommand(PluginIds.OpenDiagnosticsCommand, "打开陶瓦诊断", OpenDiagnosticsAsync);
-        TrackCommand(PluginIds.ExportDiagnosticsCommand, "导出陶瓦诊断", ExportDiagnosticsAsync);
-        TrackCommand(PluginIds.RestartHelperCommand, "重启陶瓦核心", RestartHelperAsync);
-        TrackCommand(PluginIds.OpenHelpCommand, "打开陶瓦帮助", OpenHelpAsync);
+        TrackCommand(PluginIds.LeaveRoomCommand, _localizer.Get("terracotta.leaveRoom", "退出房间"), token => LeaveAsync(token).AsTask());
+        TrackCommand(PluginIds.CopyRoomCodeCommand, _localizer.Get("terracotta.copyRoomCode", "复制房间码"), CopyRoomCodeAsync);
+        TrackCommand(PluginIds.CopyConnectAddressCommand, _localizer.Get("terracotta.copyAddress", "复制联机地址"), CopyConnectAddressAsync);
+        TrackCommand(PluginIds.OpenDiagnosticsCommand, _localizer.Get("terracotta.openDiagnostics", "打开陶瓦诊断"), OpenDiagnosticsAsync);
+        TrackCommand(PluginIds.ExportDiagnosticsCommand, _localizer.Get("terracotta.exportDiagnostics", "导出陶瓦诊断"), ExportDiagnosticsAsync);
+        TrackCommand(PluginIds.RestartHelperCommand, _localizer.Get("terracotta.restartHelper", "重启陶瓦核心"), RestartHelperAsync);
+        TrackCommand(PluginIds.OpenHelpCommand, _localizer.Get("terracotta.openHelp", "打开陶瓦帮助"), OpenHelpAsync);
     }
 
     public void QueueCreate() =>
-        QueueOperation("create-room", token => CreateAsync(new TerracottaCreateRoomRequest(), token).AsTask());
+        QueueOperation("create-room", token => RunConnectionTaskAsync(
+            inner => CreateAsync(new TerracottaCreateRoomRequest(), inner).AsTask(), token));
 
     public void QueueJoin(string roomCode) =>
-        QueueOperation("join-room", token => JoinAsync(new TerracottaJoinRoomRequest(roomCode), token).AsTask());
+        QueueOperation("join-room", token => RunConnectionTaskAsync(
+            inner => JoinAsync(new TerracottaJoinRoomRequest(roomCode), inner).AsTask(), token));
 
     public void QueueLeave() => QueueOperation("leave-room", token => LeaveAsync(token).AsTask());
 
     public void QueueCopyRoomCode() => QueueOperation("copy-room-code", CopyRoomCodeAsync);
 
-    public void QueueDiagnose() => QueueOperation("diagnose", RunDiagnoseCommandAsync);
+    public void QueueDiagnose() => QueueOperation("diagnose", token => RunBackgroundTaskAsync(
+        "terracotta.task.diagnose", "陶瓦网络诊断", RunDiagnoseCommandAsync, token));
 
     public void QueueCopyDiagnostics() => QueueOperation("copy-diagnostics", CopyDiagnosticsAsync);
 
-    public void QueueExportDiagnostics() => QueueOperation("export-diagnostics", ExportDiagnosticsAsync);
+    public void QueueExportDiagnostics() => QueueOperation("export-diagnostics", token => RunBackgroundTaskAsync(
+        "terracotta.task.export", "导出陶瓦诊断", ExportDiagnosticsAsync, token));
 
     public string CreateDiagnosticReportJson() => DiagnosticCollector.CreateJson(
         _context.Plugin.Version.ToString(),
@@ -621,6 +632,76 @@ public sealed class TerracottaController :
         }
     }
 
+    private async Task RunConnectionTaskAsync(
+        Func<CancellationToken, Task> operation,
+        CancellationToken cancellationToken)
+    {
+        if (_backgroundTasks is null)
+        {
+            await operation(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        using IPluginBackgroundTask task = _backgroundTasks.Begin(
+            _localizer.Get("terracotta.task.connect", "建立陶瓦联机"));
+        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, task.Token);
+        try
+        {
+            task.Report(new PluginBackgroundTaskProgress(
+                _localizer.Get("terracotta.task.startHelper", "正在启动陶瓦核心"), Progress: 0.1));
+            task.Report(new PluginBackgroundTaskProgress(
+                _localizer.Get("terracotta.task.network", "正在建立网络"), Progress: 0.35));
+            task.Report(new PluginBackgroundTaskProgress(
+                _localizer.Get("terracotta.task.nat", "正在执行 NAT 穿透"), Progress: 0.65));
+            await operation(linked.Token).ConfigureAwait(false);
+            task.Report(new PluginBackgroundTaskProgress(
+                _localizer.Get("terracotta.task.connectHost", "正在连接房主"), Progress: 0.9));
+            task.Complete(_localizer.Get("terracotta.task.connected", "连接完成"));
+        }
+        catch (OperationCanceledException) when (linked.IsCancellationRequested)
+        {
+            task.Fail("Canceled", canceled: true);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            task.Fail(SensitiveDataRedactor.Redact(exception.Message));
+            throw;
+        }
+    }
+
+    private async Task RunBackgroundTaskAsync(
+        string titleKey,
+        string titleFallback,
+        Func<CancellationToken, Task> operation,
+        CancellationToken cancellationToken)
+    {
+        if (_backgroundTasks is null)
+        {
+            await operation(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        using IPluginBackgroundTask task = _backgroundTasks.Begin(_localizer.Get(titleKey, titleFallback));
+        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, task.Token);
+        try
+        {
+            task.Report(new PluginBackgroundTaskProgress(titleFallback, Progress: 0.1));
+            await operation(linked.Token).ConfigureAwait(false);
+            task.Complete(_localizer.Get("terracotta.task.completed", "已完成"));
+        }
+        catch (OperationCanceledException) when (linked.IsCancellationRequested)
+        {
+            task.Fail("Canceled", canceled: true);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            task.Fail(SensitiveDataRedactor.Redact(exception.Message));
+            throw;
+        }
+    }
+
     private void TrackCommand(string id, string title, Func<CancellationToken, Task> executeAsync) =>
         _context.Lifetime.Track(_commands.Register(new PluginCommandDescriptor(id, title, executeAsync)));
 
@@ -645,6 +726,9 @@ public sealed class TerracottaController :
     {
         if (LanAddressResolver.TryResolvePort(session.LanAddress, out int snapshotPort))
             return snapshotPort;
+
+        if (_output is null)
+            return null;
 
         foreach (PluginGameProcessOutput line in _output.Read(session.SessionId, 0, 2048).Reverse())
         {

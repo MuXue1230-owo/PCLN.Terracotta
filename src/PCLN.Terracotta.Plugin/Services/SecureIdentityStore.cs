@@ -7,11 +7,17 @@ public sealed class SecureIdentityStore(IPluginSecureStorage? storage)
 {
     private const int IdentityBytes = 32;
     private static readonly PluginSecretKey PrivateKey = new("identity.private-key");
+    private byte[]? _temporaryIdentity;
+
+    public bool UsesTemporaryIdentity => storage is null;
 
     public async ValueTask<byte[]> GetOrCreateAsync(CancellationToken cancellationToken = default)
     {
         if (storage is null)
-            throw new SecureIdentityException("安全存储服务不可用，无法初始化陶瓦身份。");
+        {
+            _temporaryIdentity ??= RandomNumberGenerator.GetBytes(IdentityBytes);
+            return _temporaryIdentity.ToArray();
+        }
 
         PluginSecretReadResult read;
         try

@@ -17,7 +17,7 @@
     "type": "Cn.Pcln.Terracotta.PluginEntry"
   },
   "api": {
-    "minimum": "0.2",
+    "minimum": "0.1",
     "maximumExclusive": "1.0"
   },
   "host": {
@@ -35,13 +35,16 @@
       "pcl.tasks": ">=0.1 <1.0",
       "pcl.instances.read": ">=0.1 <1.0",
       "pcl.game.sessions": ">=0.1 <1.0",
-      "pcl.game.output": ">=0.1 <1.0",
       "pcl.launch.events": ">=0.1 <1.0",
       "pcl.process": ">=0.1 <1.0",
-      "pcl.ui.avalonia.pages": ">=0.1 <1.0"
+      "pcl.ui.avalonia.pages": ">=0.1 <1.0",
+      "pcl.localization": ">=0.1 <1.0"
     },
     "optional": {
       "pcl.ui.avalonia.windows": ">=0.1 <1.0",
+      "pcl.ui.components": ">=0.1 <1.0",
+      "pcl.background-tasks": ">=0.1 <1.0",
+      "pcl.game.output": ">=0.1 <1.0",
       "pcl.clipboard": ">=0.1 <1.0",
       "pcl.secure-storage": ">=0.1 <1.0",
       "pcl.notifications": ">=0.1 <1.0",
@@ -51,18 +54,24 @@
     }
   },
   "permissions": [
-    { "id": "ui.register", "reason": "在 PCL N 主导航中注册陶瓦联机页面。" },
-    { "id": "ui.window-management", "reason": "打开陶瓦网络诊断和日志窗口。" },
-    { "id": "launch.observe", "reason": "识别当前运行的 Minecraft 实例，并在游戏结束后关闭联机房间。" },
-    { "id": "game.output.read", "reason": "读取 Minecraft 输出以识别局域网开放地址并诊断联机问题。" },
-    { "id": "process.start", "reason": "启动随插件分发的陶瓦联机核心。" },
-    { "id": "process.input", "reason": "通过标准输入向陶瓦 Helper 传递一次性 IPC 鉴权密钥。" },
-    { "id": "process.output", "reason": "读取陶瓦联机核心的启动结果和错误信息。" },
-    { "id": "process.terminate", "reason": "在退出房间、停用插件或核心无响应时终止陶瓦联机核心。" },
-    { "id": "clipboard.write", "reason": "复制房间码、联机地址和诊断信息。" },
-    { "id": "secure-storage", "reason": "使用系统安全存储保存陶瓦身份密钥和认证信息。" },
-    { "id": "network", "reason": "执行节点发现、NAT 穿透、P2P 联机和中继连接。" }
+    { "id": "ui.register", "reason": "在 PCL N 主导航中注册陶瓦联机页面。", "kind": "required" },
+    { "id": "launch.observe", "reason": "关联正在运行的 Minecraft 游戏会话，并在游戏结束时清理联机。", "kind": "required" },
+    { "id": "process.start", "reason": "启动随插件提供的陶瓦联机核心。", "kind": "required" },
+    { "id": "process.input", "reason": "通过标准输入向陶瓦 Helper 传递一次性 IPC 鉴权密钥。", "kind": "required" },
+    { "id": "process.terminate", "reason": "退出房间或停用插件时关闭陶瓦联机核心。", "kind": "required" },
+    { "id": "pcl.network.limited", "reason": "建立 P2P、NAT 穿透和中继连接。", "kind": "required" },
+    { "id": "game.output.read", "reason": "在结构化 LAN 地址不可用时，从游戏输出识别局域网端口。", "kind": "optional" },
+    { "id": "process.output", "reason": "读取联机核心输出以生成错误诊断。", "kind": "optional" },
+    { "id": "clipboard.write", "reason": "复制房间码、连接地址和诊断报告。", "kind": "optional" },
+    { "id": "ui.window-management", "reason": "打开独立网络诊断窗口。", "kind": "optional" },
+    { "id": "secure-storage", "reason": "使用系统安全存储保存长期身份密钥。", "kind": "optional" },
+    { "id": "ui.inject", "reason": "在启动页显示陶瓦联机快捷入口。", "kind": "optional" }
   ],
+  "localization": {
+    "defaultCulture": "zh-CN",
+    "supportedCultures": ["zh-CN", "en-US"],
+    "resourcePath": "locales/{culture}.json"
+  },
   "ui": {
     "api": { "minimum": "0.1", "maximumExclusive": "1.0" },
     "avalonia": { "minimum": "12.0", "maximumExclusive": "13.0" },

@@ -13,3 +13,4 @@ target/
 *.snupkg
 *.binlog
 TestResults/
+supabase/.temp/

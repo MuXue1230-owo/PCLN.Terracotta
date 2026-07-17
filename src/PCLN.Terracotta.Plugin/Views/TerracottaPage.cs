@@ -5,12 +5,14 @@ using Avalonia.Media;
 using Avalonia.VisualTree;
 using Cn.Pcln.Terracotta.Application;
 using Cn.Pcln.Terracotta.Contracts;
+using Cn.Pcln.Terracotta.Services;
 
 namespace Cn.Pcln.Terracotta.Views;
 
 public sealed class TerracottaPage : UserControl
 {
     private readonly TerracottaController _controller;
+    private readonly TerracottaLocalizer _localizer;
     private readonly TextBlock _stateText;
     private readonly TextBlock _detailText;
     private readonly TextBox _roomCodeInput;
@@ -19,11 +21,12 @@ public sealed class TerracottaPage : UserControl
     private readonly TextBlock _roomCodeText;
     private readonly TextBlock _addressText;
 
-    public TerracottaPage(TerracottaController controller)
+    public TerracottaPage(TerracottaController controller, TerracottaLocalizer localizer)
     {
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
-        _stateText = CreateText("未连接", 18, FontWeight.SemiBold);
-        _detailText = CreateText("创建房间，或输入 12 位房间码加入。", 13);
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
+        _stateText = CreateText(_localizer.Get("terracotta.state.idle", "未连接"), 18, FontWeight.SemiBold);
+        _detailText = CreateText(_localizer.Get("terracotta.description.idle", "创建房间，或输入 12 位房间码加入。"), 13);
         _roomCodeInput = new TextBox
         {
             PlaceholderText = "XXXX-XXXX-XXXX",
@@ -44,8 +47,8 @@ public sealed class TerracottaPage : UserControl
                 Spacing = 20,
                 Children =
                 {
-                    CreateText("陶瓦联机", 30, FontWeight.Bold),
-                    CreateText("安全、跨平台的 Minecraft P2P 联机", 14),
+                    CreateText(_localizer.Get("terracotta.title", "陶瓦联机"), 30, FontWeight.Bold),
+                    CreateText(_localizer.Get("terracotta.subtitle", "安全、跨平台的 Minecraft P2P 联机"), 14),
                     BuildStatusCard(),
                     _idleActions,
                     _roomActions
@@ -72,9 +75,9 @@ public sealed class TerracottaPage : UserControl
 
     private StackPanel BuildIdleActions()
     {
-        Button create = new() { Content = "创建房间", MinWidth = 120 };
+        Button create = new() { Content = _localizer.Get("terracotta.createRoom", "创建房间"), MinWidth = 120 };
         create.Click += (_, _) => _controller.QueueCreate();
-        Button join = new() { Content = "加入房间", MinWidth = 120 };
+        Button join = new() { Content = _localizer.Get("terracotta.joinRoom", "加入房间"), MinWidth = 120 };
         join.Click += (_, _) => _controller.QueueJoin(_roomCodeInput.Text ?? string.Empty);
 
         return new StackPanel
@@ -82,7 +85,7 @@ public sealed class TerracottaPage : UserControl
             Spacing = 12,
             Children =
             {
-                CreateText("加入已有房间", 17, FontWeight.SemiBold),
+                CreateText(_localizer.Get("terracotta.joinExisting", "加入已有房间"), 17, FontWeight.SemiBold),
                 _roomCodeInput,
                 new StackPanel
                 {
@@ -90,16 +93,16 @@ public sealed class TerracottaPage : UserControl
                     Spacing = 10,
                     Children = { create, join }
                 },
-                CreateText("创建房间前，请先启动 Minecraft 并在单人世界中打开局域网。", 12)
+                CreateText(_localizer.Get("terracotta.lanHint", "创建房间前，请先启动 Minecraft 并在单人世界中打开局域网。"), 12)
             }
         };
     }
 
     private StackPanel BuildRoomActions()
     {
-        Button copyCode = new() { Content = "复制房间码" };
+        Button copyCode = new() { Content = _localizer.Get("terracotta.copyRoomCode", "复制房间码") };
         copyCode.Click += (_, _) => _controller.QueueCopyRoomCode();
-        Button leave = new() { Content = "退出房间" };
+        Button leave = new() { Content = _localizer.Get("terracotta.leaveRoom", "退出房间") };
         leave.Click += (_, _) => _controller.QueueLeave();
 
         return new StackPanel
@@ -108,7 +111,7 @@ public sealed class TerracottaPage : UserControl
             Spacing = 12,
             Children =
             {
-                CreateText("当前房间", 17, FontWeight.SemiBold),
+                CreateText(_localizer.Get("terracotta.currentRoom", "当前房间"), 17, FontWeight.SemiBold),
                 _roomCodeText,
                 _addressText,
                 new StackPanel
@@ -136,8 +139,8 @@ public sealed class TerracottaPage : UserControl
         bool hasRoom = snapshot.State is TerracottaRoomState.Connected or TerracottaRoomState.Reconnecting or TerracottaRoomState.Leaving;
         _idleActions.IsVisible = !hasRoom;
         _roomActions.IsVisible = hasRoom;
-        _roomCodeText.Text = snapshot.RoomCode ?? "正在获取房间码…";
-        _addressText.Text = snapshot.LocalAddress is null ? "联机地址：—" : $"联机地址：{snapshot.LocalAddress}";
+        _roomCodeText.Text = snapshot.RoomCode ?? _localizer.Get("terracotta.roomCodeLoading", "正在获取房间码…");
+        _addressText.Text = _localizer.Format("terracotta.address", "联机地址：{0}", snapshot.LocalAddress ?? "—");
     }
 
     // Avalonia rejects FontWeight 0 ("Font weight must be > 0"). Never use default(FontWeight).
@@ -149,28 +152,28 @@ public sealed class TerracottaPage : UserControl
         TextWrapping = TextWrapping.Wrap
     };
 
-    private static string StateLabel(TerracottaRoomState state) => state switch
+    private string StateLabel(TerracottaRoomState state) => state switch
     {
-        TerracottaRoomState.Idle => "未连接",
-        TerracottaRoomState.WaitingForGame => "等待 Minecraft 启动",
-        TerracottaRoomState.WaitingForLan => "等待打开局域网",
-        TerracottaRoomState.Creating => "正在创建房间",
-        TerracottaRoomState.Joining => "正在加入房间",
-        TerracottaRoomState.Connected => "已连接",
-        TerracottaRoomState.Reconnecting => "正在重连",
-        TerracottaRoomState.Leaving => "正在退出",
-        TerracottaRoomState.Faulted => "连接失败",
-        TerracottaRoomState.Diagnosing => "正在诊断",
+        TerracottaRoomState.Idle => _localizer.Get("terracotta.state.idle", "未连接"),
+        TerracottaRoomState.WaitingForGame => _localizer.Get("terracotta.state.waitingGame", "等待 Minecraft 启动"),
+        TerracottaRoomState.WaitingForLan => _localizer.Get("terracotta.state.waitingLan", "等待打开局域网"),
+        TerracottaRoomState.Creating => _localizer.Get("terracotta.state.creating", "正在创建房间"),
+        TerracottaRoomState.Joining => _localizer.Get("terracotta.state.joining", "正在加入房间"),
+        TerracottaRoomState.Connected => _localizer.Get("terracotta.state.connected", "已连接"),
+        TerracottaRoomState.Reconnecting => _localizer.Get("terracotta.state.reconnecting", "正在重连"),
+        TerracottaRoomState.Leaving => _localizer.Get("terracotta.state.leaving", "正在退出"),
+        TerracottaRoomState.Faulted => _localizer.Get("terracotta.state.faulted", "连接失败"),
+        TerracottaRoomState.Diagnosing => _localizer.Get("terracotta.state.diagnosing", "正在诊断"),
         _ => state.ToString()
     };
 
-    private static string StateDescription(TerracottaRoomState state) => state switch
+    private string StateDescription(TerracottaRoomState state) => state switch
     {
-        TerracottaRoomState.Idle => "创建房间，或输入 12 位房间码加入。",
-        TerracottaRoomState.WaitingForGame => "启动 Minecraft 后会自动继续。",
-        TerracottaRoomState.WaitingForLan => "在暂停菜单中选择“对局域网开放”。",
-        TerracottaRoomState.Connected => "陶瓦网络已建立，可以邀请好友加入。",
-        TerracottaRoomState.Reconnecting => "网络暂时中断，正在尝试恢复。",
-        _ => "请稍候…"
+        TerracottaRoomState.Idle => _localizer.Get("terracotta.description.idle", "创建房间，或输入 12 位房间码加入。"),
+        TerracottaRoomState.WaitingForGame => _localizer.Get("terracotta.description.waitingGame", "启动 Minecraft 后会自动继续。"),
+        TerracottaRoomState.WaitingForLan => _localizer.Get("terracotta.description.waitingLan", "在暂停菜单中选择“对局域网开放”。"),
+        TerracottaRoomState.Connected => _localizer.Get("terracotta.description.connected", "陶瓦网络已建立，可以邀请好友加入。"),
+        TerracottaRoomState.Reconnecting => _localizer.Get("terracotta.description.reconnecting", "网络暂时中断，正在尝试恢复。"),
+        _ => _localizer.Get("terracotta.description.wait", "请稍候…")
     };
 }
