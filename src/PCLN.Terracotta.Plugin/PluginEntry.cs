@@ -11,6 +11,7 @@ public sealed class PluginEntry : IPclNPlugin, IAsyncDisposable
     private TerracottaController? _controller;
     private IPluginContext? _context;
     private IAvaloniaPluginWindowService? _windows;
+    private TerracottaPclUiPresenter? _page;
 
     public ValueTask InitializeAsync(IPluginContext context, CancellationToken cancellationToken)
     {
@@ -27,7 +28,7 @@ public sealed class PluginEntry : IPclNPlugin, IAsyncDisposable
         IPluginProcessService processes = context.Services.Require<IPluginProcessService>();
         IPluginLocalizationService localization = context.Services.Require<IPluginLocalizationService>();
         TerracottaLocalizer localizer = new(localization);
-        IAvaloniaPluginPageService pages = context.Services.Require<IAvaloniaPluginPageService>();
+        PclUiService ui = context.Services.Require<PclUiService>();
         context.Services.TryGet<IPluginBackgroundTaskService>(out IPluginBackgroundTaskService? backgroundTasks);
         context.Services.TryGet<IAvaloniaPluginWindowService>(out IAvaloniaPluginWindowService? windows);
         _windows = windows;
@@ -52,21 +53,15 @@ public sealed class PluginEntry : IPclNPlugin, IAsyncDisposable
             new GameSessionCoordinator(sessions),
             output,
             launchEvents,
-            pages,
+            ui,
             windows,
             new HelperRoomGateway(helperProcess, new SecureIdentityStore(secureStorage), tasks),
             helperProcess,
             localizer,
             backgroundTasks);
 
-        context.Lifetime.Track(pages.Register(new AvaloniaPluginPageDescriptor(
-            new PluginPageDescriptor(
-                PluginIds.PageRegistration,
-                PluginIds.PageRoute,
-                localizer.Get("terracotta.title", "陶瓦联机"),
-                "lucide/network",
-                420),
-            () => new TerracottaPage(_controller, localizer))));
+        _page = new TerracottaPclUiPresenter(ui, _controller, context.Logger);
+        context.Lifetime.Track(_page);
 
         if (windows is not null)
         {
@@ -91,6 +86,12 @@ public sealed class PluginEntry : IPclNPlugin, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (_page is not null)
+        {
+            await _page.DisposeAsync().ConfigureAwait(false);
+            _page = null;
+        }
+
         if (_windows is not null && _context is not null)
         {
             IAvaloniaPluginWindowService windows = _windows;

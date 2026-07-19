@@ -5,6 +5,7 @@ using Cn.Pcln.Terracotta.Contracts;
 using Cn.Pcln.Terracotta.Diagnostics;
 using Cn.Pcln.Terracotta.Infrastructure;
 using Cn.Pcln.Terracotta.Services;
+using Cn.Pcln.Terracotta.Views;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PCL.N.Plugin;
 
@@ -14,7 +15,7 @@ namespace Cn.Pcln.Terracotta.Plugin.Tests;
 public sealed class FoundationTests
 {
     [TestMethod]
-    public void ManifestDeclaresRuntimeLaunchContribution()
+    public void ManifestDeclaresPclUiPageRegistration()
     {
         string manifestPath = Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory,
@@ -23,17 +24,69 @@ public sealed class FoundationTests
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(manifestPath));
         JsonElement target = document.RootElement.GetProperty("ui").GetProperty("targets")
             .EnumerateArray()
-            .Single(item => item.GetProperty("target").GetString() == "pcl.page.launch");
+            .Single(item => item.GetProperty("target").GetString() == "pcl.navigation.main");
         JsonElement operation = target.GetProperty("operations").EnumerateArray()
-            .Single(item => item.GetProperty("id").GetString() == PluginIds.LaunchContribution);
+            .Single(item => item.GetProperty("id").GetString() == PluginIds.PageRegistration);
 
         CollectionAssert.Contains(
             target.GetProperty("access").EnumerateArray().Select(item => item.GetString()).ToArray(),
-            "inject");
-        Assert.AreEqual("inject", operation.GetProperty("kind").GetString());
-        Assert.AreEqual("primary-actions.after", operation.GetProperty("slot").GetString());
-        Assert.IsFalse(operation.GetProperty("required").GetBoolean());
-        Assert.AreEqual("disable-feature", operation.GetProperty("fallback").GetString());
+            "register");
+        Assert.AreEqual("register", operation.GetProperty("kind").GetString());
+        Assert.IsTrue(operation.GetProperty("required").GetBoolean());
+        Assert.AreEqual("fail-load", operation.GetProperty("fallback").GetString());
+    }
+
+    [TestMethod]
+    public void TerracottaPageModelUsesNativeComponentsAndFormattedI18n()
+    {
+        PclUiElement idle = TerracottaPclUiPresenter.BuildContent(TerracottaRoomSnapshot.Idle, "AB12-CD34-EF56");
+        PclUiElement[] idleElements = Descendants(idle).ToArray();
+        Assert.IsTrue(idleElements.OfType<PclUiCard>().Any());
+        Assert.IsTrue(idleElements.OfType<PclUiTextBox>().Any(item =>
+            item.Id == TerracottaPclUiPresenter.RoomCodeInputId && item.Value == "AB12-CD34-EF56"));
+        Assert.IsTrue(idleElements.OfType<PclUiButton>().Any(item =>
+            item.Id == TerracottaPclUiPresenter.CreateButtonId && item.Style == PclUiButtonStyle.Primary));
+
+        TerracottaRoomSnapshot connected = new(
+            TerracottaRoomState.Connected,
+            TerracottaRoomRole.Host,
+            "AB12-CD34-EF56",
+            "127.0.0.1:25565",
+            "session-1",
+            null,
+            []);
+        PclUiText address = Descendants(TerracottaPclUiPresenter.BuildContent(connected, string.Empty))
+            .OfType<PclUiText>()
+            .Single(item => item.Text.Key == "terracotta.address");
+        Assert.AreEqual("127.0.0.1:25565", address.Text.Arguments.Single());
+    }
+
+    [TestMethod]
+    public void RequiredLocalesHaveIdenticalKeys()
+    {
+        string localeRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..", "..",
+            "src", "PCLN.Terracotta.Plugin", "locales"));
+        using JsonDocument chinese = JsonDocument.Parse(File.ReadAllText(Path.Combine(localeRoot, "zh-CN.json")));
+        using JsonDocument english = JsonDocument.Parse(File.ReadAllText(Path.Combine(localeRoot, "en-US.json")));
+        string[] chineseKeys = chinese.RootElement.EnumerateObject().Select(item => item.Name).Order().ToArray();
+        string[] englishKeys = english.RootElement.EnumerateObject().Select(item => item.Name).Order().ToArray();
+        CollectionAssert.AreEqual(chineseKeys, englishKeys);
+    }
+
+    private static IEnumerable<PclUiElement> Descendants(PclUiElement element)
+    {
+        yield return element;
+        IEnumerable<PclUiElement> children = element switch
+        {
+            PclUiStack stack => stack.Children,
+            PclUiCard card => [card.Content],
+            _ => []
+        };
+        foreach (PclUiElement child in children)
+        foreach (PclUiElement descendant in Descendants(child))
+            yield return descendant;
     }
 
     [TestMethod]

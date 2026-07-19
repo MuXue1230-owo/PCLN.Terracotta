@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5
+
+- Rebuilt the multiplayer page with launcher-native `PclUiXXX` components and live state updates.
+- Migrated page text to `PCLN.Plugin.i18n`, including formatted connection addresses and culture refresh.
+- Kept the advanced diagnostics window on the audited Avalonia window capability.
+
 ## 0.1.4
 
 - Remove the launch-page shortcut card while retaining the plugin-owned main navigation page

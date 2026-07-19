@@ -3,7 +3,7 @@
     <AssemblyName>PCLN.Terracotta.Plugin</AssemblyName>
     <RootNamespace>Cn.Pcln.Terracotta</RootNamespace>
     <Description>Official Terracotta multiplayer plugin for PCL N.</Description>
-    <PclNPluginSdkVersion>0.2.0</PclNPluginSdkVersion>
+    <PclNPluginSdkVersion>0.2.3</PclNPluginSdkVersion>
     <PclNPluginId>cn.pcln.terracotta</PclNPluginId>
     <PclNPluginSign>false</PclNPluginSign>
     <PclNPluginOutputDirectory>$(MSBuildThisFileDirectory)..\..\artifacts\</PclNPluginOutputDirectory>
@@ -11,9 +11,11 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../PCLN.Terracotta.Contracts/PCLN.Terracotta.Contracts.csproj" />
+    <InternalsVisibleTo Include="PCLN.Terracotta.Plugin.Tests" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="PCLN.Plugin.Abstractions" Version="$(PclNPluginSdkVersion)" />
+    <PackageReference Include="PCLN.Plugin.i18n" Version="$(PclNPluginSdkVersion)" />
     <PackageReference Include="PCLN.Plugin.UI" Version="$(PclNPluginSdkVersion)" />
     <PackageReference Include="PCLN.Plugin.UI.Avalonia" Version="$(PclNPluginSdkVersion)" />
     <PackageReference Include="PCLN.Plugin.Sdk" Version="$(PclNPluginSdkVersion)" PrivateAssets="all" />

@@ -25,7 +25,7 @@ public sealed class TerracottaController :
     private readonly GameSessionCoordinator _sessions;
     private readonly IPluginGameOutputService? _output;
     private readonly IPluginLaunchEventService _launchEvents;
-    private readonly IPluginNavigationService _navigation;
+    private readonly PclUiService _navigation;
     private readonly IAvaloniaPluginWindowService? _windows;
     private readonly HelperRoomGateway _helper;
     private readonly HelperProcessManager _helperProcess;
@@ -53,7 +53,7 @@ public sealed class TerracottaController :
         GameSessionCoordinator sessions,
         IPluginGameOutputService? output,
         IPluginLaunchEventService launchEvents,
-        IPluginNavigationService navigation,
+        PclUiService navigation,
         IAvaloniaPluginWindowService? windows,
         HelperRoomGateway helper,
         HelperProcessManager helperProcess,
