@@ -5,7 +5,7 @@
 - [ ] `scripts/pre-release-check.ps1` 全绿
 - [ ] Windows / Ubuntu / macOS CI 全绿
 - [ ] 六个 RID Helper release 产物齐全
-- [ ] （可选）六个 RID `easytier-core` 与 `easytier-cli` 齐全
+- [ ] 六个 RID `easytier-core` 齐全，Windows 两个 RID 同时包含 `Packet.dll`
 - [ ] `scripts/generate-sbom.ps1` 生成 `artifacts/sbom/`
 
 ## 功能验收
@@ -20,8 +20,7 @@
 
 ## 包与签名
 
-- [ ] `TerracottaRequireNativeHelpers=true` 打包 `.pnp`
-- [ ] （正式）`TerracottaRequireEasyTier=true`
+- [ ] `TerracottaRequireNativeHelpers=true` 与 `TerracottaRequireEasyTier=true` 打包 `.pnp`
 - [ ] OpenPGP 签名与文件表哈希校验
 - [ ] Unix Helper / EasyTier 可执行位
 - [ ] 版本号与 `CHANGELOG.md` 一致

@@ -17,6 +17,7 @@ use crate::{
 };
 
 use super::{
+    MinecraftLanBroadcast,
     credentials::{RoomCredentials, machine_id_from_identity},
     discovery::{
         RoomEndpointAdvertisement, clear_local_endpoint, load_local_endpoint, now_unix_seconds,
@@ -57,6 +58,7 @@ struct MemberSession {
     /// Present when join used same-machine discovery instead of EasyTier port-forward.
     scaffolding_forward: Option<PortForward>,
     minecraft_forward: Option<PortForward>,
+    minecraft_broadcast: Option<MinecraftLanBroadcast>,
     local_scaffolding: SocketAddr,
     local_minecraft: SocketAddr,
     prefer_direct: bool,
@@ -122,6 +124,9 @@ impl EasyTierRoomBackend {
                     let _ = clear_local_endpoint(&room_code);
                 }
                 ActiveSession::Member(member) => {
+                    if let Some(broadcast) = member.minecraft_broadcast {
+                        broadcast.stop().await;
+                    }
                     if let Some(forward) = member.scaffolding_forward {
                         forward.stop().await;
                     }
@@ -348,12 +353,20 @@ impl RoomBackend for EasyTierRoomBackend {
             },
             members,
         };
+        let minecraft_broadcast = match MinecraftLanBroadcast::start(local_minecraft).await {
+            Ok(value) => Some(value),
+            Err(error) => {
+                tracing::warn!(%error, "Terracotta joined, but local Minecraft discovery could not start");
+                None
+            }
+        };
         drop(credentials);
 
         *self.session.lock().await = Some(ActiveSession::Member(MemberSession {
             easytier,
             scaffolding_forward: None,
             minecraft_forward: None,
+            minecraft_broadcast,
             local_scaffolding,
             local_minecraft,
             prefer_direct: true,
@@ -625,12 +638,20 @@ impl EasyTierRoomBackend {
         };
         let local_scaffolding = scaffolding_forward.local_addr();
         let local_minecraft = minecraft_forward.local_addr();
+        let minecraft_broadcast = match MinecraftLanBroadcast::start(local_minecraft).await {
+            Ok(value) => Some(value),
+            Err(error) => {
+                tracing::warn!(%error, "Terracotta joined, but local Minecraft discovery could not start");
+                None
+            }
+        };
         drop(credentials);
 
         *self.session.lock().await = Some(ActiveSession::Member(MemberSession {
             easytier,
             scaffolding_forward: Some(scaffolding_forward),
             minecraft_forward: Some(minecraft_forward),
+            minecraft_broadcast,
             local_scaffolding,
             local_minecraft,
             prefer_direct: true,

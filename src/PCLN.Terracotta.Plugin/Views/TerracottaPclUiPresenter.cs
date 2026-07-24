@@ -150,7 +150,9 @@ internal sealed class TerracottaPclUiPresenter : IAsyncDisposable
                         {
                             Id = JoinButtonId,
                             Text = Text("terracotta.joinRoom", "加入房间"),
-                            IsEnabled = !isBusy && !string.IsNullOrWhiteSpace(roomCodeInput)
+                            // Keep the action reachable while idle. The controller owns validation
+                            // and can present an actionable invalid-code error to the user.
+                            IsEnabled = !isBusy
                         }
                     ]
                 },
@@ -219,7 +221,8 @@ internal sealed class TerracottaPclUiPresenter : IAsyncDisposable
         {
             case { ElementId: RoomCodeInputId, Kind: PclUiEventKind.ValueChanged, Value: string value }:
                 _roomCodeInput = value.Trim();
-                _ = RefreshAsync(_controller.CurrentRoom);
+                // Do not rebuild the dynamic page for each keystroke: replacing the TextBox here
+                // drops focus and made room codes effectively impossible to enter.
                 break;
             case { ElementId: CreateButtonId, Kind: PclUiEventKind.Click }:
                 _controller.QueueCreate();

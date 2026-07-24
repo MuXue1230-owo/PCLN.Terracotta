@@ -46,6 +46,10 @@ public sealed class FoundationTests
             item.Id == TerracottaPclUiPresenter.RoomCodeInputId && item.Value == "AB12-CD34-EF56"));
         Assert.IsTrue(idleElements.OfType<PclUiButton>().Any(item =>
             item.Id == TerracottaPclUiPresenter.CreateButtonId && item.Style == PclUiButtonStyle.Primary));
+        Assert.IsTrue(Descendants(TerracottaPclUiPresenter.BuildContent(TerracottaRoomSnapshot.Idle, string.Empty))
+            .OfType<PclUiButton>()
+            .Single(item => item.Id == TerracottaPclUiPresenter.JoinButtonId)
+            .IsEnabled);
 
         TerracottaRoomSnapshot connected = new(
             TerracottaRoomState.Connected,

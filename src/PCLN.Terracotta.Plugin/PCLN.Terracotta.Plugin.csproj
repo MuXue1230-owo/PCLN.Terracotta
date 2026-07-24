@@ -34,6 +34,8 @@
          diagnostics fall back to TCP RTT probing when it is unavailable. -->
     <PclNPluginNative Include="../../native/win-x64/easytier-core.exe" RuntimeIdentifier="win-x64" Condition="Exists('../../native/win-x64/easytier-core.exe')" />
     <PclNPluginNative Include="../../native/win-arm64/easytier-core.exe" RuntimeIdentifier="win-arm64" Condition="Exists('../../native/win-arm64/easytier-core.exe')" />
+    <PclNPluginNative Include="../../native/win-x64/Packet.dll" RuntimeIdentifier="win-x64" Condition="Exists('../../native/win-x64/Packet.dll')" />
+    <PclNPluginNative Include="../../native/win-arm64/Packet.dll" RuntimeIdentifier="win-arm64" Condition="Exists('../../native/win-arm64/Packet.dll')" />
     <PclNPluginNative Include="../../native/linux-x64/easytier-core" RuntimeIdentifier="linux-x64" Condition="Exists('../../native/linux-x64/easytier-core')" />
     <PclNPluginNative Include="../../native/linux-arm64/easytier-core" RuntimeIdentifier="linux-arm64" Condition="Exists('../../native/linux-arm64/easytier-core')" />
     <PclNPluginNative Include="../../native/osx-x64/easytier-core" RuntimeIdentifier="osx-x64" Condition="Exists('../../native/osx-x64/easytier-core')" />
@@ -54,6 +56,8 @@
           Condition="'$(TerracottaRequireEasyTier)' == 'true'">
     <Error Condition="!Exists('../../native/win-x64/easytier-core.exe')" Text="EasyTier sidecar is missing for win-x64." />
     <Error Condition="!Exists('../../native/win-arm64/easytier-core.exe')" Text="EasyTier sidecar is missing for win-arm64." />
+    <Error Condition="!Exists('../../native/win-x64/Packet.dll')" Text="EasyTier Packet.dll is missing for win-x64." />
+    <Error Condition="!Exists('../../native/win-arm64/Packet.dll')" Text="EasyTier Packet.dll is missing for win-arm64." />
     <Error Condition="!Exists('../../native/linux-x64/easytier-core')" Text="EasyTier sidecar is missing for linux-x64." />
     <Error Condition="!Exists('../../native/linux-arm64/easytier-core')" Text="EasyTier sidecar is missing for linux-arm64." />
     <Error Condition="!Exists('../../native/osx-x64/easytier-core')" Text="EasyTier sidecar is missing for osx-x64." />

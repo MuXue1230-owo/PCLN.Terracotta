@@ -68,10 +68,28 @@ pub fn resolve_easytier_binary() -> Option<PathBuf> {
     let current = env::current_exe().ok()?;
     let directory = current.parent()?;
     let candidate = directory.join(easytier_file_name());
-    if candidate.is_file() {
+    if runtime_dependencies_available(&candidate) {
         return Some(candidate);
     }
     None
+}
+
+fn runtime_dependencies_available(binary: &std::path::Path) -> bool {
+    if !binary.is_file() {
+        return false;
+    }
+
+    #[cfg(windows)]
+    {
+        // Official EasyTier Windows archives dynamically load WinPcap's Packet.dll.
+        // Packaging only easytier-core.exe causes an immediate 0xC0000135 exit.
+        binary
+            .parent()
+            .is_some_and(|directory| directory.join("Packet.dll").is_file())
+    }
+
+    #[cfg(not(windows))]
+    true
 }
 
 /// Deterministic loopback RPC portal from room material to keep cli queries stable.
@@ -99,6 +117,21 @@ pub async fn start_easytier(
         .env("ET_NETWORK_NAME", &credentials.network_name)
         .env("ET_NETWORK_SECRET", credentials.network_secret.as_str())
         .arg("--use-smoltcp")
+        .arg("--multi-thread")
+        .arg("--enable-kcp-proxy")
+        .arg("--enable-quic-proxy")
+        .arg("--encryption-algorithm")
+        .arg("aes-gcm")
+        .arg("--compression")
+        .arg("zstd")
+        .arg("--private-mode")
+        .arg("true")
+        // Random listeners avoid the fixed-port conflicts that the upstream
+        // implementation also avoids when multiple launchers share a machine.
+        .arg("-l")
+        .arg("tcp://0.0.0.0:0")
+        .arg("-l")
+        .arg("udp://0.0.0.0:0")
         .arg("--rpc-portal")
         .arg(config.rpc_portal.to_string())
         .arg("--rpc-portal-whitelist")
@@ -152,7 +185,7 @@ pub async fn start_easytier(
 pub fn easytier_missing() -> RoomError {
     RoomError::new(
         "network.easytier-missing",
-        "The EasyTier runtime was not found next to terracotta-helper. Place easytier-core in the same native directory or set TERRACOTTA_EASYTIER_PATH.",
+        "The EasyTier runtime or one of its required native dependencies was not found next to terracotta-helper. On Windows, easytier-core.exe and Packet.dll must be installed together.",
         false,
     )
 }
@@ -194,7 +227,7 @@ fn shared_peers() -> Vec<String> {
 mod tests {
     use super::{
         allow_tun, easytier_file_name, easytier_missing, resolve_easytier_binary,
-        rpc_portal_for_room,
+        rpc_portal_for_room, runtime_dependencies_available,
     };
 
     #[test]
@@ -231,5 +264,22 @@ mod tests {
         assert_eq!(left, right);
         assert!(left.ip().is_loopback());
         assert!(left.port() >= 19_000);
+    }
+
+    #[test]
+    fn runtime_dependency_check_rejects_incomplete_windows_bundle() {
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join(easytier_file_name());
+        std::fs::write(&binary, b"fixture").unwrap();
+
+        #[cfg(windows)]
+        {
+            assert!(!runtime_dependencies_available(&binary));
+            std::fs::write(directory.path().join("Packet.dll"), b"fixture").unwrap();
+            assert!(runtime_dependencies_available(&binary));
+        }
+
+        #[cfg(not(windows))]
+        assert!(runtime_dependencies_available(&binary));
     }
 }

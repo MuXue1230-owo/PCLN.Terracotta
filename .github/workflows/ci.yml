@@ -69,7 +69,7 @@ jobs:
         run: |
           mkdir -p "native/${{ matrix.rid }}"
           cp "src/Terracotta.Helper/target/${{ matrix.target }}/release/${{ matrix.executable }}" "native/${{ matrix.rid }}/${{ matrix.executable }}"
-      - name: Stage optional EasyTier sidecar
+      - name: Stage EasyTier runtime
         shell: bash
         env:
           EASYTIER_VERSION: ${{ vars.EASYTIER_VERSION }}
@@ -77,18 +77,18 @@ jobs:
           set -euo pipefail
           version="${EASYTIER_VERSION:-}"
           if [[ -z "$version" ]]; then
-            echo "EASYTIER_VERSION repository variable is unset; packaging helper-only native assets."
+            echo "EASYTIER_VERSION repository variable is unset; the package job will reject the incomplete runtime."
             exit 0
           fi
           # Optional opt-in: set repo variable EASYTIER_VERSION (e.g. 2.6.4) to download official EasyTier assets.
           rid="${{ matrix.rid }}"
           case "$rid" in
-            win-x64) asset="easytier-windows-x86_64.zip"; bin="easytier-core.exe" ;;
-            win-arm64) asset="easytier-windows-arm64.zip"; bin="easytier-core.exe" ;;
-            linux-x64) asset="easytier-linux-x86_64.zip"; bin="easytier-core" ;;
-            linux-arm64) asset="easytier-linux-aarch64.zip"; bin="easytier-core" ;;
-            osx-x64) asset="easytier-macos-x86_64.zip"; bin="easytier-core" ;;
-            osx-arm64) asset="easytier-macos-aarch64.zip"; bin="easytier-core" ;;
+            win-x64) asset="easytier-windows-x86_64-v${version}.zip"; bin="easytier-core.exe" ;;
+            win-arm64) asset="easytier-windows-arm64-v${version}.zip"; bin="easytier-core.exe" ;;
+            linux-x64) asset="easytier-linux-x86_64-v${version}.zip"; bin="easytier-core" ;;
+            linux-arm64) asset="easytier-linux-aarch64-v${version}.zip"; bin="easytier-core" ;;
+            osx-x64) asset="easytier-macos-x86_64-v${version}.zip"; bin="easytier-core" ;;
+            osx-arm64) asset="easytier-macos-aarch64-v${version}.zip"; bin="easytier-core" ;;
             *) echo "Unknown RID $rid"; exit 1 ;;
           esac
           url="https://github.com/EasyTier/EasyTier/releases/download/v${version}/${asset}"
@@ -106,6 +106,15 @@ jobs:
           cp "$found" "native/${rid}/$bin"
           chmod +x "native/${rid}/$bin" || true
           echo "Staged EasyTier sidecar $bin for $rid"
+          if [[ "$rid" == win-* ]]; then
+            packet_found="$(find "$tmp/out" -type f -iname 'Packet.dll' | head -n 1 || true)"
+            if [[ -z "$packet_found" ]]; then
+              echo "EasyTier archive did not contain the required Packet.dll for $rid."
+              exit 1
+            fi
+            cp "$packet_found" "native/${rid}/Packet.dll"
+            echo "Staged required EasyTier dependency Packet.dll for $rid"
+          fi
           cli_name="easytier-cli"
           if [[ "$rid" == win-* ]]; then cli_name="easytier-cli.exe"; fi
           cli_found="$(find "$tmp/out" -type f -name "$cli_name" | head -n 1 || true)"
@@ -140,7 +149,7 @@ jobs:
             rid="${directory#native/helper-}"
             mv "$directory" "native/$rid"
           done
-      - run: dotnet build src/PCLN.Terracotta.Plugin/PCLN.Terracotta.Plugin.csproj -c Release --nologo -p:TerracottaRequireNativeHelpers=true
+      - run: dotnet build src/PCLN.Terracotta.Plugin/PCLN.Terracotta.Plugin.csproj -c Release --nologo -p:TerracottaRequireNativeHelpers=true -p:TerracottaRequireEasyTier=true
       - uses: actions/upload-artifact@v4
         with:
           name: terracotta-pnp
