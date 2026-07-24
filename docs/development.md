@@ -16,7 +16,8 @@ dotnet test PCLN.Terracotta.slnx -c Release --nologo
 dotnet build src/PCLN.Terracotta.Plugin/PCLN.Terracotta.Plugin.csproj -c Release --nologo
 ```
 
-项目使用已发布的 PCL N Plugin SDK `0.1.1`。该版本提供 `pcl.package-assets`，并修复 SDK Build 工具目录，因此不再需要相邻 SDK 源码或 `0.1.0` 的打包路径兼容逻辑。
+项目使用已发布的 PCL N Plugin SDK `0.2.3`。该版本提供 `PclUiXXX`、多语言与
+`pcl.package-assets`，因此不需要相邻 SDK 源码，并能在返回原生资源路径前校验签名包文件表。
 
 Helper：
 

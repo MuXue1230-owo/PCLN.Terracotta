@@ -4,9 +4,10 @@
 
 ## 当前实现状态
 
-当前为 **`0.1.1` 正式版**：
+当前为 **`0.1.6` 正式版**：
 
 - 完整联机路径：EasyTier + Scaffolding + mesh + 同机 discovery；
+- 加入房间后自动向本机 Minecraft 广播转发地址，无需手工添加服务器；
 - 插件导出四件套、双工 IPC 推送事件、连接中轮询与重连；
 - Helper 崩溃自动恢复（窗口内单次）并尝试重建房间；
 - EasyTier CLI 诊断（可选）与 TCP 探测回退；
@@ -43,7 +44,9 @@ cargo test --manifest-path src/Terracotta.Helper/Cargo.toml --locked --all-targe
 dotnet build src/PCLN.Terracotta.Plugin/PCLN.Terracotta.Plugin.csproj -c Release
 ```
 
-正式 CI 会构建六个 RID 的 Helper，将其放入 `native/<rid>/`，并以 `TerracottaRequireNativeHelpers=true` 生成完整 `.pnp`。任何一个目标缺失都会使打包失败。
+正式 CI 会构建六个 RID 的 Helper，将其放入 `native/<rid>/`，并以
+`TerracottaRequireNativeHelpers=true`、`TerracottaRequireEasyTier=true` 生成完整 `.pnp`。
+Windows 运行时还必须同时包含 `Packet.dll`；任何一个必需目标缺失都会使打包失败。
 
 ## 项目布局
 

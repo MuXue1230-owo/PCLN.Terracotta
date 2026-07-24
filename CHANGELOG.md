@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6
+
+- Fixed PclUi room-code entry so typing updates the plugin immediately without rebuilding the page or dropping focus.
+- Restored the upstream join behavior: the action remains available while idle and the controller reports invalid codes.
+- Matched upstream EasyTier runtime behavior with random TCP/UDP listeners, encrypted private networking, compression, and lossy-network proxies.
+- Advertise the joined loopback forward to the local Minecraft client so the room appears in the multiplayer list.
+- Include the required Windows `Packet.dll`, reject incomplete EasyTier bundles, and make complete native runtimes mandatory in release CI.
+
 ## 0.1.5
 
 - Rebuilt the multiplayer page with launcher-native `PclUiXXX` components and live state updates.
